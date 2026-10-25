@@ -20,3 +20,17 @@ __pycache__/
 *ContractoryDeliveryStationV2*
 *CreateContractoryDeliveryV2*
 *BP_Contractory_Livraison_V2*
+
+# Anciennes sauvegardes
+Backups/
+*.bak
+*.bak_*
+*.bak-*
+*.bak.*
+
+# Fichiers temporaires Unreal
+Binaries/
+Intermediate/
+Saved/
+DerivedDataCache/
+
