@@ -1,0 +1,76 @@
+﻿#include "ContractoryMissionRemoteCallObject.h"
+
+#include "ContractoryMissionSubsystem.h"
+
+#include "FGPlayerController.h"
+#include "FGPlayerState.h"
+
+#include "Subsystem/SubsystemActorManager.h"
+#include "Net/UnrealNetwork.h"
+
+void UContractoryMissionRemoteCallObject::GetLifetimeReplicatedProps(
+    TArray<FLifetimeProperty>& OutLifetimeProps
+) const
+{
+    Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+    DOREPLIFETIME(
+        UContractoryMissionRemoteCallObject,
+        mForceNetField_UContractoryMissionRemoteCallObject
+    );
+}
+
+void UContractoryMissionRemoteCallObject::
+Server_AcceptMission_Implementation(int32 MissionId)
+{
+    AFGPlayerController* PlayerController =
+        GetOwnerPlayerController();
+
+    if (!PlayerController)
+    {
+        return;
+    }
+
+    AFGPlayerState* PlayerState =
+        PlayerController->GetPlayerState<AFGPlayerState>();
+
+    if (!PlayerState)
+    {
+        return;
+    }
+
+    UWorld* World = GetWorld();
+
+    if (!World)
+    {
+        return;
+    }
+
+    USubsystemActorManager* SubsystemActorManager =
+        World->GetSubsystem<USubsystemActorManager>();
+
+    if (!SubsystemActorManager)
+    {
+        return;
+    }
+
+    AContractoryMissionSubsystem* MissionSubsystem =
+        SubsystemActorManager
+            ->GetSubsystemActor<AContractoryMissionSubsystem>();
+
+    if (!MissionSubsystem)
+    {
+        UE_LOG(
+            LogTemp,
+            Warning,
+            TEXT("[Contractory] Mission subsystem introuvable depuis le RCO.")
+        );
+
+        return;
+    }
+
+    MissionSubsystem->AcceptMissionForPlayer(
+        PlayerState,
+        MissionId
+    );
+}

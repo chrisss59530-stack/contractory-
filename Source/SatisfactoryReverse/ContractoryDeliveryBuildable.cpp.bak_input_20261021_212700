@@ -1,0 +1,12 @@
+﻿#include "ContractoryDeliveryBuildable.h"
+
+#include "FGInventoryComponent.h"
+
+AContractoryDeliveryBuildable::
+AContractoryDeliveryBuildable()
+{
+    DeliveryInventory =
+        CreateDefaultSubobject<UFGInventoryComponent>(
+            TEXT("ContractoryDeliveryInventory")
+        );
+}

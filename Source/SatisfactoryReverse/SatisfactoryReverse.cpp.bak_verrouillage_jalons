@@ -1,0 +1,165 @@
+﻿#include "CoreMinimal.h"
+#include "Modules/ModuleManager.h"
+#include "FGSchematicManager.h"
+#include "FGGamePhaseManager.h"
+#include "FGGamePhase.h"
+#include "FGSchematic.h"
+#include "Buildables/FGBuildableSpaceElevator.h"
+#include "Patching/NativeHookManager.h"
+
+class FSatisfactoryReverseModule : public IModuleInterface
+{
+public:
+    virtual void StartupModule() override
+    {
+        UE_LOG(LogTemp, Log, TEXT("[FICSIT Hardcore] Initialisation"));
+
+        if (!WITH_EDITOR)
+        {
+            // Hook existant : suivi des jalons
+            SUBSCRIBE_METHOD(
+                AFGSchematicManager::SetActiveSchematic,
+                [](auto& Scope, AFGSchematicManager* Manager,
+                   TSubclassOf<UFGSchematic> Schematic)
+                {
+                    UE_LOG(
+                        LogTemp,
+                        Warning,
+                        TEXT("[FICSIT Hardcore] Selection du jalon : %s"),
+                        *GetNameSafe(Schematic.Get())
+                    );
+                }
+            );
+
+            // Nouveau hook : controle des lancements de l'Ascenseur
+            SUBSCRIBE_METHOD(
+                AFGBuildableSpaceElevator::SetSpaceElevatorState,
+                [](auto& Scope,
+                   AFGBuildableSpaceElevator* Elevator,
+                   ESpaceElevatorState NewState,
+                   APlayerController* InstigatingPlayer)
+                {
+                    if (!Elevator || !Elevator->HasAuthority())
+                    {
+                        return;
+                    }
+
+                    // Verifier les contrats avant de sceller ou envoyer
+                    if (NewState != ESES_Seal && NewState != ESES_Send)
+                    {
+                        return;
+                    }
+
+                    UWorld* World = Elevator->GetWorld();
+
+                    if (!World)
+                    {
+                        Scope.Cancel();
+                        return;
+                    }
+
+                    AFGGamePhaseManager* PhaseManager =
+                        AFGGamePhaseManager::Get(World);
+
+                    AFGSchematicManager* SchematicManager =
+                        AFGSchematicManager::Get(World);
+
+                    if (!PhaseManager || !SchematicManager)
+                    {
+                        UE_LOG(LogTemp, Error,
+                            TEXT("[FICSIT] Managers indisponibles - lancement refuse"));
+                        Scope.Cancel();
+                        return;
+                    }
+
+                    UFGGamePhase* TargetPhase =
+                        PhaseManager->GetTargetGamePhase();
+
+                    if (!TargetPhase)
+                    {
+                        return;
+                    }
+
+                    const FString TargetName = TargetPhase->GetName();
+
+                    int32 FirstContract = 0;
+                    int32 LastContract = 0;
+                    int32 PhaseNumber = 0;
+
+                    if (TargetName == TEXT("GP_Project_Assembly_Phase_1"))
+                    {
+                        PhaseNumber = 1;
+                        FirstContract = 1;
+                        LastContract = 6;
+                    }
+                    else if (TargetName == TEXT("GP_Project_Assembly_Phase_2"))
+                    {
+                        PhaseNumber = 2;
+                        FirstContract = 7;
+                        LastContract = 12;
+                    }
+                    else if (TargetName == TEXT("GP_Project_Assembly_Phase_3"))
+                    {
+                        PhaseNumber = 3;
+                        FirstContract = 13;
+                        LastContract = 16;
+                    }
+                    else if (TargetName == TEXT("GP_Project_Assembly_Phase_4"))
+                    {
+                        PhaseNumber = 4;
+                        FirstContract = 17;
+                        LastContract = 20;
+                    }
+                    else if (TargetName == TEXT("GP_Project_Assembly_Phase_5"))
+                    {
+                        PhaseNumber = 5;
+                        FirstContract = 21;
+                        LastContract = 21;
+                    }
+                    else
+                    {
+                        return;
+                    }
+
+                    for (int32 Id = FirstContract; Id <= LastContract; ++Id)
+                    {
+                        const FString ClassPath = FString::Printf(
+                            TEXT("/SatisfactoryReverse/Schematics/Schematic_FICSIT_Contract_%03d.Schematic_FICSIT_Contract_%03d_C"),
+                            Id, Id
+                        );
+
+                        TSubclassOf<UFGSchematic> ContractClass =
+                            LoadClass<UFGSchematic>(nullptr, *ClassPath);
+
+                        if (!ContractClass ||
+                            !SchematicManager->IsSchematicPurchased(ContractClass))
+                        {
+                            UE_LOG(
+                                LogTemp,
+                                Warning,
+                                TEXT("[FICSIT] PHASE %d BLOQUEE - contrat %03d manquant"),
+                                PhaseNumber, Id
+                            );
+
+                            Scope.Cancel();
+                            return;
+                        }
+                    }
+
+                    UE_LOG(
+                        LogTemp,
+                        Log,
+                        TEXT("[FICSIT] PHASE %d AUTORISEE - contrats valides"),
+                        PhaseNumber
+                    );
+                }
+            );
+        }
+    }
+
+    virtual void ShutdownModule() override
+    {
+    }
+};
+
+IMPLEMENT_MODULE(FSatisfactoryReverseModule, SatisfactoryReverse)

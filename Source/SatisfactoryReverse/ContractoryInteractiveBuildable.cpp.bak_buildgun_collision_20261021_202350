@@ -1,0 +1,50 @@
+﻿#include "ContractoryInteractiveBuildable.h"
+
+#include "Components/BoxComponent.h"
+
+void AContractoryInteractiveBuildable::BeginPlay()
+{
+    Super::BeginPlay();
+
+    if (InteractionBox)
+        return;
+
+    InteractionBox = NewObject<UBoxComponent>(
+        this,
+        TEXT("ContractoryInteractionBox")
+    );
+
+    if (!InteractionBox)
+        return;
+
+    InteractionBox->SetBoxExtent(FVector(160.0f, 160.0f, 180.0f));
+    InteractionBox->SetRelativeLocation(FVector(0.0f, 0.0f, 180.0f));
+
+    InteractionBox->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+    InteractionBox->SetCollisionResponseToAllChannels(ECR_Ignore);
+
+    // Canal Satisfactory "Interact"
+    InteractionBox->SetCollisionResponseToChannel(
+        ECC_GameTraceChannel13,
+        ECR_Block
+    );
+
+    InteractionBox->SetGenerateOverlapEvents(false);
+
+    if (USceneComponent* Root = GetRootComponent())
+    {
+        InteractionBox->AttachToComponent(
+            Root,
+            FAttachmentTransformRules::KeepRelativeTransform
+        );
+    }
+
+    InteractionBox->RegisterComponent();
+
+    UE_LOG(
+        LogTemp,
+        Log,
+        TEXT("[Contractory] Interaction box created for %s"),
+        *GetName()
+    );
+}

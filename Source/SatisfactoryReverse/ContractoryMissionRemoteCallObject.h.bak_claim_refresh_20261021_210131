@@ -1,0 +1,63 @@
+﻿#pragma once
+
+#include "CoreMinimal.h"
+#include "FGRemoteCallObject.h"
+#include "ContractoryMissionManager.h"
+#include "ContractoryMissionRemoteCallObject.generated.h"
+
+DECLARE_MULTICAST_DELEGATE(FContractoryMissionStateUpdated);
+
+UCLASS()
+class SATISFACTORYREVERSE_API UContractoryMissionRemoteCallObject
+    : public UFGRemoteCallObject
+{
+    GENERATED_BODY()
+
+public:
+    virtual void GetLifetimeReplicatedProps(
+        TArray<FLifetimeProperty>& OutLifetimeProps
+    ) const override;
+
+    UFUNCTION(Server, Reliable)
+    void Server_RequestMissionState();
+
+    UFUNCTION(Server, Reliable)
+    void Server_AcceptMission(int32 MissionId);
+
+    UFUNCTION(Client, Reliable)
+    void Client_ReceiveMissionState(
+        int32 Credits,
+        const TArray<FContractoryMissionDefinition>& Offers,
+        const TArray<FContractoryActiveMission>& ActiveMissions
+    );
+
+    int32 GetCachedCredits() const
+    {
+        return CachedCredits;
+    }
+
+    const TArray<FContractoryMissionDefinition>& GetCachedOffers() const
+    {
+        return CachedOffers;
+    }
+
+    const TArray<FContractoryActiveMission>& GetCachedActiveMissions() const
+    {
+        return CachedActiveMissions;
+    }
+
+    FContractoryMissionStateUpdated OnMissionStateUpdated;
+
+private:
+    UPROPERTY(Transient)
+    int32 CachedCredits = 0;
+
+    UPROPERTY(Transient)
+    TArray<FContractoryMissionDefinition> CachedOffers;
+
+    UPROPERTY(Transient)
+    TArray<FContractoryActiveMission> CachedActiveMissions;
+
+    UPROPERTY(Replicated, Meta=(NoAutoJson))
+    bool mForceNetField_UContractoryMissionRemoteCallObject = false;
+};

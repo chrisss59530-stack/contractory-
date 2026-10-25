@@ -1,0 +1,49 @@
+﻿#pragma once
+
+#include "CoreMinimal.h"
+#include "FGSchematic.h"
+#include "Kismet/BlueprintFunctionLibrary.h"
+#include "ContractoryFinalGate.generated.h"
+
+UCLASS()
+class SATISFACTORYREVERSE_API UContractoryFinalPortalTraversedSchematic
+    : public UFGSchematic
+{
+    GENERATED_BODY()
+
+public:
+    UContractoryFinalPortalTraversedSchematic();
+};
+
+UCLASS()
+class SATISFACTORYREVERSE_API UContractoryFinalGateLibrary
+    : public UBlueprintFunctionLibrary
+{
+    GENERATED_BODY()
+
+public:
+
+    UFUNCTION(
+        BlueprintCallable,
+        Category="Contractory|Final",
+        meta=(
+            WorldContext="WorldContextObject",
+            DisplayName="Marquer Portail Contractory Traverse"
+        )
+    )
+    static bool MarkFinalPortalTraversed(
+        const UObject* WorldContextObject
+    );
+
+    UFUNCTION(
+        BlueprintPure,
+        Category="Contractory|Final",
+        meta=(
+            WorldContext="WorldContextObject",
+            DisplayName="Portail Contractory Deja Traverse"
+        )
+    )
+    static bool IsFinalPortalTraversed(
+        const UObject* WorldContextObject
+    );
+};

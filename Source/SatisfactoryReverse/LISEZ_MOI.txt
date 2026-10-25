@@ -1,0 +1,14 @@
+CONTRACTORY — CATALOGUE DE 60 MISSIONS SECONDAIRES
+
+Contenu : 2 nouveaux fichiers C++ autonomes. Aucune modification des fichiers existants.
+Le catalogue expose 60 missions et un filtre par palier aux Blueprints.
+ATTENTION : inventaire, vérification des objets, synchronisation multijoueur,
+acceptation (3 max), rotation (5 affichées), crédits persistants, sauvegarde et UI
+ne sont PAS encore implémentés. Les TargetItemKey sont des identifiants
+PROVISOIRES, pas des références validées aux assets du jeu. N'activer aucune
+livraison depuis ces données sans le mapping réel des items.
+
+Installation : extraire les 2 fichiers dans
+C:\SatisfactoryReverse\SML\Mods\SatisfactoryReverse\Source\SatisfactoryReverse
+avant de générer/actualiser les fichiers projet puis compiler avec Visual Studio.
+Ne pas extraire sur les builds de test existants.

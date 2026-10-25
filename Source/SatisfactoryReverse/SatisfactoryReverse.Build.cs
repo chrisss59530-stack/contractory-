@@ -1,0 +1,24 @@
+﻿using UnrealBuildTool;
+
+public class SatisfactoryReverse : ModuleRules
+{
+    public SatisfactoryReverse(ReadOnlyTargetRules Target) : base(Target)
+    {
+        CppStandard = CppStandardVersion.Cpp20;
+        DefaultBuildSettings = BuildSettingsVersion.Latest;
+        PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
+
+        PublicDependencyModuleNames.AddRange(new string[]
+        {
+            "Core",
+            "CoreUObject",
+            "Engine",
+            "FactoryGame",
+            "SML",
+            "UMG",
+            "Slate",
+            "SlateCore",
+            "InputCore"
+        });
+    }
+}

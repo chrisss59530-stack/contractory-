@@ -1,0 +1,179 @@
+﻿#include "ContractoryMissionRemoteCallObject.h"
+
+#include "ContractoryMissionSubsystem.h"
+
+#include "FGPlayerController.h"
+#include "FGPlayerState.h"
+
+#include "Subsystem/SubsystemActorManager.h"
+#include "Net/UnrealNetwork.h"
+
+namespace
+{
+    AContractoryMissionSubsystem* FindMissionSubsystem(
+        UWorld* World
+    )
+    {
+        if (!World)
+        {
+            return nullptr;
+        }
+
+        USubsystemActorManager* SubsystemActorManager =
+            World->GetSubsystem<USubsystemActorManager>();
+
+        if (!SubsystemActorManager)
+        {
+            return nullptr;
+        }
+
+        return SubsystemActorManager
+            ->GetSubsystemActor<AContractoryMissionSubsystem>();
+    }
+}
+
+void UContractoryMissionRemoteCallObject::GetLifetimeReplicatedProps(
+    TArray<FLifetimeProperty>& OutLifetimeProps
+) const
+{
+    Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+    DOREPLIFETIME(
+        UContractoryMissionRemoteCallObject,
+        mForceNetField_UContractoryMissionRemoteCallObject
+    );
+}
+
+void UContractoryMissionRemoteCallObject::
+Server_RequestMissionState_Implementation()
+{
+    AFGPlayerController* PlayerController =
+        GetOwnerPlayerController();
+
+    if (!PlayerController)
+    {
+        return;
+    }
+
+    AFGPlayerState* PlayerState =
+        PlayerController->GetPlayerState<AFGPlayerState>();
+
+    if (!PlayerState)
+    {
+        return;
+    }
+
+    AContractoryMissionSubsystem* MissionSubsystem =
+        FindMissionSubsystem(GetWorld());
+
+    if (!MissionSubsystem)
+    {
+        UE_LOG(
+            LogTemp,
+            Warning,
+            TEXT("[Contractory] Mission subsystem not found from RCO.")
+        );
+
+        return;
+    }
+
+    int32 Credits = 0;
+    TArray<FContractoryMissionDefinition> Offers;
+    TArray<FContractoryActiveMission> ActiveMissions;
+
+    if (MissionSubsystem->GetMissionStateForPlayer(
+            PlayerState,
+            Credits,
+            Offers,
+            ActiveMissions
+        ))
+    {
+        Client_ReceiveMissionState(
+            Credits,
+            Offers,
+            ActiveMissions
+        );
+    }
+}
+
+void UContractoryMissionRemoteCallObject::
+Server_AcceptMission_Implementation(int32 MissionId)
+{
+    AFGPlayerController* PlayerController =
+        GetOwnerPlayerController();
+
+    if (!PlayerController)
+    {
+        return;
+    }
+
+    AFGPlayerState* PlayerState =
+        PlayerController->GetPlayerState<AFGPlayerState>();
+
+    if (!PlayerState)
+    {
+        return;
+    }
+
+    AContractoryMissionSubsystem* MissionSubsystem =
+        FindMissionSubsystem(GetWorld());
+
+    if (!MissionSubsystem)
+    {
+        UE_LOG(
+            LogTemp,
+            Warning,
+            TEXT("[Contractory] Mission subsystem not found from RCO.")
+        );
+
+        return;
+    }
+
+    MissionSubsystem->AcceptMissionForPlayer(
+        PlayerState,
+        MissionId
+    );
+
+    int32 Credits = 0;
+    TArray<FContractoryMissionDefinition> Offers;
+    TArray<FContractoryActiveMission> ActiveMissions;
+
+    if (MissionSubsystem->GetMissionStateForPlayer(
+            PlayerState,
+            Credits,
+            Offers,
+            ActiveMissions
+        ))
+    {
+        Client_ReceiveMissionState(
+            Credits,
+            Offers,
+            ActiveMissions
+        );
+    }
+}
+
+void UContractoryMissionRemoteCallObject::
+Client_ReceiveMissionState_Implementation(
+    int32 Credits,
+    const TArray<FContractoryMissionDefinition>& Offers,
+    const TArray<FContractoryActiveMission>& ActiveMissions
+)
+{
+    CachedCredits = Credits;
+    CachedOffers = Offers;
+    CachedActiveMissions = ActiveMissions;
+
+    UE_LOG(
+        LogTemp,
+        Log,
+        TEXT(
+            "[Contractory] Mission state received: Credits=%d Offers=%d Active=%d"
+        ),
+        CachedCredits,
+        CachedOffers.Num(),
+        CachedActiveMissions.Num()
+    );
+
+    OnMissionStateUpdated.Broadcast();
+}

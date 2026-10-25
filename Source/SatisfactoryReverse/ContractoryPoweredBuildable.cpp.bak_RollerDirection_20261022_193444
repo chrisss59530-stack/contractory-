@@ -1,0 +1,444 @@
+﻿#include "ContractoryPoweredBuildable.h"
+
+#include "Components/ChildActorComponent.h"
+#include "Components/SceneComponent.h"
+#include "Components/StaticMeshComponent.h"
+
+#include "Engine/StaticMesh.h"
+
+#include "FGPowerConnectionComponent.h"
+#include "FGPowerInfoComponent.h"
+
+#include "UObject/ConstructorHelpers.h"
+
+AContractoryPoweredBuildable::AContractoryPoweredBuildable()
+{
+    // ============================================================
+    // ALIMENTATION
+    // ============================================================
+
+    PowerAnchor =
+        CreateDefaultSubobject<USceneComponent>(
+            TEXT("ContractoryPowerAnchor")
+        );
+
+    PowerAnchor->SetupAttachment(RootComponent);
+
+    PowerInfo =
+        CreateDefaultSubobject<UFGPowerInfoComponent>(
+            TEXT("ContractoryPowerInfo")
+        );
+
+    PowerConnection =
+        CreateDefaultSubobject<UFGPowerConnectionComponent>(
+            TEXT("ContractoryPowerConnection")
+        );
+
+    PowerConnection->SetupAttachment(PowerAnchor);
+    PowerConnection->SetMobility(EComponentMobility::Movable);
+    PowerConnection->SetPowerInfo(PowerInfo);
+
+    // ============================================================
+    // PETIT BOITIER ELECTRIQUE VANILLA
+    // ============================================================
+
+    PowerSocketMesh =
+        CreateDefaultSubobject<UStaticMeshComponent>(
+            TEXT("ContractoryPowerSocketMesh")
+        );
+
+    PowerSocketMesh->SetupAttachment(PowerAnchor);
+    PowerSocketMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    PowerSocketMesh->SetGenerateOverlapEvents(false);
+
+    static ConstructorHelpers::FObjectFinder<UStaticMesh> SocketMesh(
+        TEXT(
+            "/Game/FactoryGame/Buildable/Factory/"
+            "PowerPoleWall/Mesh/"
+            "SM_PowerPoleWall_MK1.SM_PowerPoleWall_MK1"
+        )
+    );
+
+    if (SocketMesh.Succeeded())
+    {
+        PowerSocketMesh->SetStaticMesh(SocketMesh.Object);
+    }
+
+    // ============================================================
+    // ANIMATIONS
+    // ============================================================
+
+    PrimaryActorTick.bCanEverTick = true;
+    PrimaryActorTick.bStartWithTickEnabled = true;
+}
+
+void AContractoryPoweredBuildable::BeginPlay()
+{
+    Super::BeginPlay();
+
+    if (PowerConnection && PowerInfo)
+    {
+        PowerConnection->SetPowerInfo(PowerInfo);
+
+        if (HasAuthority())
+        {
+            PowerInfo->SetTargetConsumption(1.0f);
+            PowerInfo->SetMaximumTargetConsumption(1.0f);
+        }
+
+        UE_LOG(
+            LogTemp,
+            Log,
+            TEXT("[Contractory] Power connection ready for %s"),
+            *GetName()
+        );
+    }
+
+    CacheAnimationComponents();
+}
+
+bool AContractoryPoweredBuildable::HasContractoryPower() const
+{
+    return
+        PowerConnection &&
+        PowerConnection->IsConnected() &&
+        PowerInfo &&
+        PowerInfo->HasPower();
+}
+
+void AContractoryPoweredBuildable::CacheAnimationComponents()
+{
+    TerminalScreenLines.Empty();
+    DeliveryRollers.Empty();
+    DeliveryRollerPivots.Empty();
+    DeliveryScannerBeams.Empty();
+    DeliveryLights.Empty();
+
+    TArray<UChildActorComponent*> ChildActors;
+    GetComponents<UChildActorComponent>(ChildActors);
+
+    for (UChildActorComponent* ChildComponent : ChildActors)
+    {
+        if (!ChildComponent)
+            continue;
+
+        AActor* VisualActor = ChildComponent->GetChildActor();
+
+        if (!VisualActor)
+            continue;
+
+        TArray<UStaticMeshComponent*> MeshComponents;
+        VisualActor->GetComponents<UStaticMeshComponent>(MeshComponents);
+
+        for (UStaticMeshComponent* MeshComponent : MeshComponents)
+        {
+            if (!MeshComponent)
+                continue;
+
+            UStaticMesh* Mesh = MeshComponent->GetStaticMesh();
+
+            if (!Mesh)
+                continue;
+
+            const FString MeshName = Mesh->GetName();
+
+            // ----------------------------------------------------
+            // TERMINAL : lignes animées sur l'écran
+            // ----------------------------------------------------
+
+            if (MeshName.Contains(TEXT("Terminal")) &&
+                MeshName.Contains(TEXT("ScreenLine_")))
+            {
+                TerminalScreenLines.AddUnique(MeshComponent);
+                continue;
+            }
+
+            // ----------------------------------------------------
+            // LIVRAISON : rouleaux
+            // ----------------------------------------------------
+
+            if (MeshName.Contains(TEXT("Livraison")) &&
+                MeshName.Contains(TEXT("ANIM_DeliveryRoller_")))
+            {
+                MeshComponent->SetMobility(
+                    EComponentMobility::Movable
+                );
+
+                DeliveryRollers.AddUnique(MeshComponent);
+
+                // Le mesh exporté n'a pas son pivot au centre.
+                // On crée donc un pivot runtime au centre réel
+                // de la géométrie du rouleau.
+
+                const FVector LocalPivot =
+                    Mesh->GetBounds().Origin;
+
+                const FVector WorldPivot =
+                    MeshComponent
+                        ->GetComponentTransform()
+                        .TransformPosition(LocalPivot);
+
+                USceneComponent* RollerPivot =
+                    NewObject<USceneComponent>(
+                        VisualActor,
+                        FName(
+                            *FString::Printf(
+                                TEXT("ContractoryRollerPivot_%d"),
+                                DeliveryRollerPivots.Num()
+                            )
+                        )
+                    );
+
+                if (RollerPivot)
+                {
+                    VisualActor->AddInstanceComponent(
+                        RollerPivot
+                    );
+
+                    RollerPivot->SetMobility(
+                        EComponentMobility::Movable
+                    );
+
+                    RollerPivot->RegisterComponent();
+
+                    if (USceneComponent* VisualRoot =
+                        VisualActor->GetRootComponent())
+                    {
+                        RollerPivot->AttachToComponent(
+                            VisualRoot,
+                            FAttachmentTransformRules::
+                                KeepWorldTransform
+                        );
+                    }
+
+                    RollerPivot->SetWorldLocation(
+                        WorldPivot
+                    );
+
+                    RollerPivot->SetWorldRotation(
+                        MeshComponent->GetComponentRotation()
+                    );
+
+                    MeshComponent->AttachToComponent(
+                        RollerPivot,
+                        FAttachmentTransformRules::
+                            KeepWorldTransform
+                    );
+
+                    DeliveryRollerPivots.Add(
+                        RollerPivot
+                    );
+                }
+
+                continue;
+            }
+
+            // ----------------------------------------------------
+            // LIVRAISON : scanner
+            // ----------------------------------------------------
+
+            if (MeshName.Contains(TEXT("Livraison")) &&
+                MeshName.Contains(TEXT("ANIM_ScannerLightBeam")))
+            {
+                DeliveryScannerBeams.AddUnique(MeshComponent);
+                continue;
+            }
+
+            // ----------------------------------------------------
+            // LIVRAISON : LEDs / lumières
+            // ----------------------------------------------------
+
+            if (MeshName.Contains(TEXT("Livraison")) &&
+                (
+                    MeshName.Contains(TEXT("Console_LED")) ||
+                    MeshName.Contains(TEXT("Safety_Light")) ||
+                    MeshName.Contains(TEXT("Track_Light")) ||
+                    MeshName.Contains(TEXT("ReceivingStatusLED"))
+                ))
+            {
+                DeliveryLights.AddUnique(MeshComponent);
+            }
+        }
+    }
+
+    bAnimationComponentsCached = true;
+
+    UE_LOG(
+        LogTemp,
+        Log,
+        TEXT(
+            "[Contractory] Animation cache %s : "
+            "ScreenLines=%d Rollers=%d Scanner=%d Lights=%d"
+        ),
+        *GetName(),
+        TerminalScreenLines.Num(),
+        DeliveryRollers.Num(),
+        DeliveryScannerBeams.Num(),
+        DeliveryLights.Num()
+    );
+}
+
+void AContractoryPoweredBuildable::SetMachineLightsVisible(
+    bool bVisible
+)
+{
+    for (UStaticMeshComponent* Component : DeliveryLights)
+    {
+        if (Component)
+        {
+            Component->SetVisibility(bVisible, true);
+        }
+    }
+
+    for (UStaticMeshComponent* Component : DeliveryScannerBeams)
+    {
+        if (Component)
+        {
+            Component->SetVisibility(bVisible, true);
+        }
+    }
+
+    for (UStaticMeshComponent* Component : TerminalScreenLines)
+    {
+        if (Component)
+        {
+            Component->SetVisibility(bVisible, true);
+        }
+    }
+}
+
+void AContractoryPoweredBuildable::UpdatePoweredVisuals(
+    float DeltaSeconds,
+    bool bPowered
+)
+{
+    if (!bPowered)
+    {
+        SetMachineLightsVisible(false);
+        return;
+    }
+
+    AnimationClock += DeltaSeconds;
+
+    // ============================================================
+    // TERMINAL
+    // Effet de lignes qui défilent sur l'écran
+    // ============================================================
+
+    if (TerminalScreenLines.Num() > 0)
+    {
+        const int32 ActiveLine =
+            FMath::FloorToInt(AnimationClock * 5.0f)
+            % TerminalScreenLines.Num();
+
+        for (int32 i = 0; i < TerminalScreenLines.Num(); ++i)
+        {
+            if (TerminalScreenLines[i])
+            {
+                TerminalScreenLines[i]->SetVisibility(
+                    i <= ActiveLine,
+                    true
+                );
+            }
+        }
+    }
+
+    // ============================================================
+    // LIVRAISON
+    // Les rouleaux sont longs sur X.
+    // Le pivot runtime est placé au centre réel de chaque rouleau,
+    // puis on effectue une rotation Roll = axe X.
+    // ============================================================
+
+    const float RotationSpeed = 220.0f;
+    const float Angle =
+        RotationSpeed * DeltaSeconds;
+
+    for (USceneComponent* RollerPivot :
+         DeliveryRollerPivots)
+    {
+        if (RollerPivot)
+        {
+            RollerPivot->AddLocalRotation(
+                FRotator(
+                    0.0f,
+                    0.0f,
+                    Angle
+                )
+            );
+        }
+    }
+
+    // ============================================================
+    // SCANNER LIVRAISON
+    // ============================================================
+
+    const bool bScannerVisible =
+        FMath::Fmod(AnimationClock, 1.20f) < 0.70f;
+
+    for (UStaticMeshComponent* Scanner : DeliveryScannerBeams)
+    {
+        if (Scanner)
+        {
+            Scanner->SetVisibility(
+                bScannerVisible,
+                true
+            );
+        }
+    }
+
+    // ============================================================
+    // LEDs LIVRAISON
+    // Clignotement lent
+    // ============================================================
+
+    const bool bLightsVisible =
+        FMath::Fmod(AnimationClock, 1.0f) < 0.75f;
+
+    for (UStaticMeshComponent* Light : DeliveryLights)
+    {
+        if (Light)
+        {
+            Light->SetVisibility(
+                bLightsVisible,
+                true
+            );
+        }
+    }
+}
+
+void AContractoryPoweredBuildable::Tick(float DeltaSeconds)
+{
+    Super::Tick(DeltaSeconds);
+
+    if (!bAnimationComponentsCached)
+    {
+        CacheAnimationComponents();
+    }
+
+    const bool bPowered = HasContractoryPower();
+
+    if (bPowered != bPreviousPoweredState)
+    {
+        UE_LOG(
+            LogTemp,
+            Log,
+            TEXT("[Contractory] Power state %s : %s"),
+            *GetName(),
+            bPowered ? TEXT("ON") : TEXT("OFF")
+        );
+
+        if (!bPowered)
+        {
+            SetMachineLightsVisible(false);
+        }
+
+        bPreviousPoweredState = bPowered;
+    }
+
+    UpdatePoweredVisuals(
+        DeltaSeconds,
+        bPowered
+    );
+}
+

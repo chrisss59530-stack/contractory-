@@ -1,0 +1,605 @@
+#include "Buildables/FGBuildableManufacturer.h"
+#include "FGRecipe.h"
+#include "CoreMinimal.h"
+#include "Modules/ModuleManager.h"
+#include "FGSchematicManager.h"
+#include "FGGamePhaseManager.h"
+#include "FGGamePhase.h"
+#include "FGSchematic.h"
+#include "ItemAmount.h"
+#include "Buildables/FGBuildableSpaceElevator.h"
+#include "Patching/NativeHookManager.h"
+#include "ContractoryFinalGate.h"
+#include "Kismet/GameplayStatics.h"
+#include "FGPlayerController.h"
+#include "FGChatManager.h"
+#include "Engine/World.h"
+
+// CONTRACTORY_MACHINES_V1
+void ContractoryRegisterMachines(const UObject* WorldContext);
+
+
+
+// FICSIT_VERROUILLAGE_JALONS_V2
+static bool FICSIT_JalonAutorise(
+    AFGSchematicManager* Manager,
+    TSubclassOf<UFGSchematic> Schematic)
+{
+    if (!Manager || !Schematic)
+        return true;
+
+    const FString Path = Schematic.Get()->GetPathName();
+
+    if (!Path.StartsWith(TEXT("/Game/FactoryGame/Schematics/Progression/")))
+        return true;
+
+    const int32 Tier = UFGSchematic::GetTechTier(Schematic);
+
+    // Paliers 2 a 9 : autorisation achetee avec les certificats au HUB.
+    if (Tier >= 2 && Tier <= 9)
+    {
+        const FString AutorisationPath = FString::Printf(
+            TEXT("/SatisfactoryReverse/Schematics/Schematic_FICSIT_Autorisation_Tier%d.Schematic_FICSIT_Autorisation_Tier%d_C"),
+            Tier, Tier
+        );
+
+        TSubclassOf<UFGSchematic> Autorisation =
+            LoadClass<UFGSchematic>(nullptr, *AutorisationPath);
+
+        if (!Autorisation)
+        {
+            UE_LOG(LogTemp, Error,
+                TEXT("[FICSIT] Autorisation du palier %d introuvable"), Tier);
+            return false;
+        }
+
+        return Manager->IsSchematicPurchased(Autorisation);
+    }
+
+    int32 Debut = 0;
+    int32 Fin = 0;
+
+    switch (Tier)
+    {
+        case 1: Debut = 1;  Fin = 1;  break;
+        case 2: Debut = 1;  Fin = 4;  break;
+        case 3: Debut = 5;  Fin = 6;  break;
+        case 4: Debut = 7;  Fin = 9;  break;
+        case 5: Debut = 10; Fin = 12; break;
+        case 6: Debut = 13; Fin = 14; break;
+        case 7: Debut = 15; Fin = 16; break;
+        case 8: Debut = 17; Fin = 18; break;
+        case 9: Debut = 19; Fin = 20; break;
+        default: return true;
+    }
+
+    for (int32 Id = Debut; Id <= Fin; ++Id)
+    {
+        const FString ClassPath = FString::Printf(
+            TEXT("/SatisfactoryReverse/Schematics/Schematic_FICSIT_Contract_%03d.Schematic_FICSIT_Contract_%03d_C"),
+            Id, Id
+        );
+
+        TSubclassOf<UFGSchematic> Contrat =
+            LoadClass<UFGSchematic>(nullptr, *ClassPath);
+
+        if (!Contrat)
+        {
+            UE_LOG(LogTemp, Error,
+                TEXT("[FICSIT] Contrat %03d introuvable"), Id);
+            return true;
+        }
+
+        if (!Manager->IsSchematicPurchased(Contrat))
+            return false;
+    }
+
+    return true;
+}
+
+static bool FICSIT_PortalFinalConstruit(UWorld* World)
+{
+    if (!World)
+        return false;
+
+    UClass* PortalClass = LoadClass<AActor>(
+        nullptr,
+        TEXT(
+            "/SatisfactoryReverse/Final/"
+            "Build_Portal_Final_FICSIT."
+            "Build_Portal_Final_FICSIT_C"
+        )
+    );
+
+    if (!PortalClass)
+    {
+        UE_LOG(
+            LogTemp,
+            Error,
+            TEXT(
+                "[CONTRACTORY FINAL] "
+                "Classe portail final introuvable"
+            )
+        );
+
+        return false;
+    }
+
+    TArray<AActor*> Portals;
+
+    UGameplayStatics::GetAllActorsOfClass(
+        World,
+        PortalClass,
+        Portals
+    );
+
+    return Portals.Num() > 0;
+}
+
+class FSatisfactoryReverseModule : public IModuleInterface
+{
+public:
+    virtual void StartupModule() override
+    {
+        UE_LOG(LogTemp, Log, TEXT("[FICSIT Hardcore] Initialisation"));
+
+        // CONTRACTORY_WORLD_INIT_V2
+        FWorldDelegates::OnPostWorldInitialization.AddLambda(
+            [](UWorld* World, const UWorld::InitializationValues IVS)
+            {
+                if (!World || !World->IsGameWorld())
+                    return;
+
+                ContractoryRegisterMachines(World);
+            }
+        );
+        #if !WITH_EDITOR
+// CONTRACTORY_HUB_VISIBILITE_V1
+        // Masquer les jalons vanilla non autorises dans le HUB.
+        SUBSCRIBE_METHOD_AFTER(
+            AFGSchematicManager::GetHubSchematicsForTier,
+            [](const AFGSchematicManager* Manager,
+               int32 Tier,
+               TArray<TSubclassOf<UFGSchematic>>& Schematics)
+            {
+                if (!Manager)
+                    return;
+
+                const int32 Avant = Schematics.Num();
+
+                Schematics.RemoveAll(
+                    [Manager](const TSubclassOf<UFGSchematic>& Schematic)
+                    {
+                        // CONTRACTORY_HUB_NULL_FIX
+                        // Une entree nulle ne doit jamais arriver dans l'UI du HUB.
+                        if (!Schematic)
+                        {
+                            UE_LOG(LogTemp, Warning,
+                                TEXT("[Contractory] HUB : schematic NULL supprime"));
+                            return true;
+                        }
+
+                        return !FICSIT_JalonAutorise(
+                            const_cast<AFGSchematicManager*>(Manager),
+                            Schematic
+                        );
+                    }
+                );
+
+                if (Avant != Schematics.Num())
+                {
+                    UE_LOG(LogTemp, Log,
+                        TEXT("[Contractory] HUB palier %d : %d jalons masques"),
+                        Tier, Avant - Schematics.Num());
+                }
+            }
+        );
+
+
+        
+
+
+#endif // CONTRACTORY_HUB_VISIBILITE_V1
+        if (!WITH_EDITOR)
+        {
+                        // FICSIT_FILTRE_RECYCLEUR_UNIQUE
+        SUBSCRIBE_METHOD_AFTER(
+            AFGBuildableManufacturer::GetAvailableRecipes,
+            [](const AFGBuildableManufacturer* Machine,
+               TArray<TSubclassOf<UFGRecipe>>& Recipes)
+            {
+                if (!Machine)
+                    return;
+
+                if (Machine->GetClass()->GetName() !=
+                    TEXT("Build_Broyeur_FICSIT_Mk1_Noir_C"))
+                    return;
+
+                const int32 Avant = Recipes.Num();
+
+                Recipes.RemoveAll(
+                    [](const TSubclassOf<UFGRecipe>& Recipe)
+                    {
+                        if (!Recipe)
+                            return true;
+
+                        const FString Chemin = Recipe.Get()->GetPathName();
+
+                        return !Chemin.StartsWith(
+                            TEXT("/SatisfactoryReverse/Recipes/Recipe_Recyclage_FICSIT_Tier"));
+                    }
+                );
+
+                UE_LOG(LogTemp, Log,
+                    TEXT("[Contractory] Recycleur : %d -> %d recettes"),
+                    Avant, Recipes.Num());
+            }
+        );
+        // Hook existant : suivi des jalons
+            SUBSCRIBE_METHOD(
+                AFGSchematicManager::SetActiveSchematic,
+                [](auto& Scope, AFGSchematicManager* Manager,
+                   TSubclassOf<UFGSchematic> Schematic)
+                {
+                    UE_LOG(
+                        LogTemp,
+                        Warning,
+                        TEXT("[FICSIT Hardcore] Selection du jalon : %s"),
+                        *GetNameSafe(Schematic.Get())
+                    );
+                }
+            );
+
+                    // Interdire la selection d'un jalon verrouille.
+        SUBSCRIBE_METHOD(
+            AFGSchematicManager::CanSetAsActiveSchematic,
+            [](auto& Scope,
+               AFGSchematicManager* Manager,
+               TSubclassOf<UFGSchematic> Schematic)
+            {
+                if (!Manager || !Schematic)
+                    return;
+
+                const FString SchematicPath = Schematic.Get()->GetPathName();
+                if (SchematicPath.StartsWith(TEXT("/SatisfactoryReverse/Schematics/Schematic_FICSIT_Contract_")))
+                    return;
+
+                if (!FICSIT_JalonAutorise(Manager, Schematic))
+                    Scope.Override(false);
+            }
+        );
+
+        // Interdire l'activation du jalon.
+        SUBSCRIBE_METHOD(
+            AFGSchematicManager::SetActiveSchematic,
+            [](auto& Scope,
+               AFGSchematicManager* Manager,
+               TSubclassOf<UFGSchematic> Schematic)
+            {
+                if (!Manager || !Schematic)
+                    return;
+
+                const FString SchematicPath = Schematic.Get()->GetPathName();
+                if (SchematicPath.StartsWith(TEXT("/SatisfactoryReverse/Schematics/Schematic_FICSIT_Contract_")))
+                    return;
+
+                if (!FICSIT_JalonAutorise(Manager, Schematic))
+                {
+                    UE_LOG(LogTemp, Warning,
+                        TEXT("[FICSIT] Jalon verrouille : %s"),
+                        *GetNameSafe(Schematic.Get()));
+
+                    Scope.Override(false);
+                }
+            }
+        );
+
+        // Interdire les paiements vers un jalon verrouille.
+        SUBSCRIBE_METHOD(
+            AFGSchematicManager::PayOffOnSchematic,
+            [](auto& Scope,
+               AFGSchematicManager* Manager,
+               TSubclassOf<UFGSchematic> Schematic,
+               TArray<FItemAmount>& Amount)
+            {
+                if (!Manager || !Schematic)
+                    return;
+
+                const FString SchematicPath = Schematic.Get()->GetPathName();
+                if (SchematicPath.StartsWith(TEXT("/SatisfactoryReverse/Schematics/Schematic_FICSIT_Contract_")))
+                    return;
+
+                if (!FICSIT_JalonAutorise(Manager, Schematic))
+                {
+                    UE_LOG(LogTemp, Warning,
+                        TEXT("[FICSIT] Paiement de jalon refuse"));
+
+                    Scope.Override(false);
+                }
+            }
+        );
+
+        // Nouveau hook : controle des lancements de l'Ascenseur
+            SUBSCRIBE_METHOD(
+                AFGBuildableSpaceElevator::SetSpaceElevatorState,
+                [](auto& Scope,
+                   AFGBuildableSpaceElevator* Elevator,
+                   ESpaceElevatorState NewState,
+                   APlayerController* InstigatingPlayer)
+                {
+                    if (!Elevator || !Elevator->HasAuthority())
+                    {
+                        return;
+                    }
+
+                    // Verifier les contrats avant de sceller ou envoyer
+                    if (NewState != ESES_Seal && NewState != ESES_Send)
+                    {
+                        return;
+                    }
+
+                    UWorld* World = Elevator->GetWorld();
+
+                    if (!World)
+                    {
+                        Scope.Cancel();
+                        return;
+                    }
+
+                    AFGGamePhaseManager* PhaseManager =
+                        AFGGamePhaseManager::Get(World);
+
+                    AFGSchematicManager* SchematicManager =
+                        AFGSchematicManager::Get(World);
+
+                    if (!PhaseManager || !SchematicManager)
+                    {
+                        UE_LOG(LogTemp, Error,
+                            TEXT("[FICSIT] Managers indisponibles - lancement refuse"));
+                        Scope.Cancel();
+                        return;
+                    }
+
+                    UFGGamePhase* TargetPhase =
+                        PhaseManager->GetTargetGamePhase();
+
+                    if (!TargetPhase)
+                    {
+                        return;
+                    }
+
+                    const FString TargetName = TargetPhase->GetName();
+
+                    // CONTRACTORY_ASCENSEUR_AUTORISATIONS_V1
+                    // Les phases 1-4 exigent une autorisation FICSIT.
+                    // La phase 5 exige le contrat final 021.
+
+                    int32 PhaseNumber = 0;
+                    int32 RequiredTier = 0;
+
+                    if (TargetName == TEXT("GP_Project_Assembly_Phase_1"))
+                    {
+                        PhaseNumber = 1;
+                        RequiredTier = 3;
+                    }
+                    else if (TargetName == TEXT("GP_Project_Assembly_Phase_2"))
+                    {
+                        PhaseNumber = 2;
+                        RequiredTier = 5;
+                    }
+                    else if (TargetName == TEXT("GP_Project_Assembly_Phase_3"))
+                    {
+                        PhaseNumber = 3;
+                        RequiredTier = 7;
+                    }
+                    else if (TargetName == TEXT("GP_Project_Assembly_Phase_4"))
+                    {
+                        PhaseNumber = 4;
+                        RequiredTier = 9;
+                    }
+                    else if (TargetName == TEXT("GP_Project_Assembly_Phase_5"))
+                    {
+                        PhaseNumber = 5;
+                    }
+                    else
+                    {
+                        return;
+                    }
+
+                    FString RequiredPath;
+
+                    if (PhaseNumber == 5)
+                    {
+                        RequiredPath = TEXT(
+                            "/SatisfactoryReverse/Schematics/"
+                            "Schematic_FICSIT_Contract_021."
+                            "Schematic_FICSIT_Contract_021_C"
+                        );
+                    }
+                    else
+                    {
+                        RequiredPath = FString::Printf(
+                            TEXT("/SatisfactoryReverse/Schematics/"
+                                 "Schematic_FICSIT_Autorisation_Tier%d."
+                                 "Schematic_FICSIT_Autorisation_Tier%d_C"),
+                            RequiredTier, RequiredTier
+                        );
+                    }
+
+                    TSubclassOf<UFGSchematic> RequiredSchematic =
+                        LoadClass<UFGSchematic>(nullptr, *RequiredPath);
+
+                    if (!RequiredSchematic ||
+                        !SchematicManager->IsSchematicPurchased(RequiredSchematic))
+                    {
+                        UE_LOG(
+                            LogTemp,
+                            Warning,
+                            TEXT("[FICSIT] PHASE %d BLOQUEE - autorisation requise : %s"),
+                            PhaseNumber,
+                            *RequiredPath
+                        );
+
+                        if (AFGPlayerController* PC =
+                            Cast<AFGPlayerController>(InstigatingPlayer))
+                        {
+                            FChatMessageStruct Message;
+                            Message.MessageType =
+                                EFGChatMessageType::CMT_SystemMessage;
+                            Message.MessageSender =
+                                FText::FromString(TEXT("FICSIT"));
+
+                            Message.MessageText = FText::FromString(
+                                PhaseNumber == 5
+                                    ? TEXT("CONTRACTORY - Expedition refusee ! Terminez le contrat final 021.")
+                                    : FString::Printf(
+                                        TEXT("CONTRACTORY - Expedition refusee ! Achetez l'autorisation FICSIT du palier %d avec vos certificats."),
+                                        RequiredTier
+                                      )
+                            );
+
+                            PC->Client_SendChatMessage(Message);
+                        }
+
+                        Scope.Cancel();
+                        return;
+                    }
+                    // CONTRACTORY_FINAL_PORTAL_GATE_V1
+                    if (PhaseNumber == 5)
+                    {
+                        const bool bPortalTraversed =
+                            UContractoryFinalGateLibrary::
+                                IsFinalPortalTraversed(World);
+
+                        if (!bPortalTraversed)
+                        {
+                            const bool bPortalBuilt =
+                                FICSIT_PortalFinalConstruit(World);
+
+                            if (!bPortalBuilt)
+                            {
+                                UE_LOG(
+                                    LogTemp,
+                                    Warning,
+                                    TEXT(
+                                        "[CONTRACTORY FINAL] "
+                                        "PHASE 5 BLOQUEE - "
+                                        "portail non construit"
+                                    )
+                                );
+
+                                if (AFGPlayerController* PC =
+                                    Cast<AFGPlayerController>(
+                                        InstigatingPlayer
+                                    ))
+                                {
+                                    FChatMessageStruct Message;
+
+                                    Message.MessageType =
+                                        EFGChatMessageType::
+                                            CMT_SystemMessage;
+
+                                    Message.MessageSender =
+                                        FText::FromString(
+                                            TEXT("CONTRACTORY")
+                                        );
+
+                                    Message.MessageText =
+                                        FText::FromString(
+                                            TEXT(
+                                                "PHASE FINALE BLOQUEE ! "
+                                                "Construisez le Portail "
+                                                "Contractory."
+                                            )
+                                        );
+
+                                    PC->Client_SendChatMessage(
+                                        Message
+                                    );
+                                }
+
+                                Scope.Cancel();
+                                return;
+                            }
+
+                            UE_LOG(
+                                LogTemp,
+                                Warning,
+                                TEXT(
+                                    "[CONTRACTORY FINAL] "
+                                    "PHASE 5 BLOQUEE - "
+                                    "portail construit mais non traverse"
+                                )
+                            );
+
+                            if (AFGPlayerController* PC =
+                                Cast<AFGPlayerController>(
+                                    InstigatingPlayer
+                                ))
+                            {
+                                FChatMessageStruct Message;
+
+                                Message.MessageType =
+                                    EFGChatMessageType::
+                                        CMT_SystemMessage;
+
+                                Message.MessageSender =
+                                    FText::FromString(
+                                        TEXT("CONTRACTORY")
+                                    );
+
+                                Message.MessageText =
+                                    FText::FromString(
+                                        TEXT(
+                                            "PHASE FINALE BLOQUEE ! "
+                                            "Traversez le Portail "
+                                            "Contractory."
+                                        )
+                                    );
+
+                                PC->Client_SendChatMessage(
+                                    Message
+                                );
+                            }
+
+                            Scope.Cancel();
+                            return;
+                        }
+
+                        UE_LOG(
+                            LogTemp,
+                            Warning,
+                            TEXT(
+                                "[CONTRACTORY FINAL] "
+                                "PHASE 5 AUTORISEE - "
+                                "portail traverse"
+                            )
+                        );
+                    }
+                    UE_LOG(
+                        LogTemp,
+                        Log,
+                        TEXT("[FICSIT] PHASE %d AUTORISEE - autorisation validee"),
+                        PhaseNumber
+                    );
+                }
+            );
+        }
+    }
+
+    virtual void ShutdownModule() override
+    {
+    }
+};
+
+IMPLEMENT_MODULE(FSatisfactoryReverseModule, SatisfactoryReverse)
+
+
+
+
+
+
+
+
+
+

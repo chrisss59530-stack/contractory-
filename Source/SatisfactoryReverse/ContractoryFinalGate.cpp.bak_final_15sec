@@ -1,0 +1,326 @@
+﻿#include "ContractoryFinalGate.h"
+
+#include "FGSchematicManager.h"
+
+#include "Blueprint/UserWidget.h"
+#include "Engine/World.h"
+#include "GameFramework/PlayerController.h"
+#include "HAL/PlatformTime.h"
+#include "Kismet/GameplayStatics.h"
+#include "UObject/UObjectIterator.h"
+
+
+// ============================================================
+// MARQUEUR PERSISTANT
+// ============================================================
+
+UContractoryFinalPortalTraversedSchematic::
+UContractoryFinalPortalTraversedSchematic()
+{
+    mType = ESchematicType::EST_Custom;
+
+    mDisplayName =
+        FText::FromString(
+            TEXT("Contractory Final Portal Traversed")
+        );
+
+    mDescription =
+        FText::FromString(
+            TEXT("Internal Contractory progression marker")
+        );
+
+    mTechTier = 9;
+
+    mCost.Reset();
+    mUnlocks.Reset();
+
+    mTimeToComplete = 0.0f;
+    mIsPlayerSpecific = false;
+    mDependenciesBlocksSchematicAccess = false;
+    mHiddenUntilDependenciesMet = true;
+}
+
+
+// ============================================================
+// VERIFICATION DU MARQUEUR
+// ============================================================
+
+bool UContractoryFinalGateLibrary::IsFinalPortalTraversed(
+    const UObject* WorldContextObject
+)
+{
+    if (!WorldContextObject)
+        return false;
+
+    UWorld* World = WorldContextObject->GetWorld();
+
+    if (!World)
+        return false;
+
+    AFGSchematicManager* Manager =
+        AFGSchematicManager::Get(World);
+
+    if (!Manager)
+        return false;
+
+    return Manager->IsSchematicPurchased(
+        UContractoryFinalPortalTraversedSchematic::StaticClass()
+    );
+}
+
+
+// ============================================================
+// ENREGISTRER LA TRAVERSEE
+// ============================================================
+
+bool UContractoryFinalGateLibrary::MarkFinalPortalTraversed(
+    const UObject* WorldContextObject
+)
+{
+    if (!WorldContextObject)
+        return false;
+
+    UWorld* World = WorldContextObject->GetWorld();
+
+    if (!World)
+        return false;
+
+    AFGSchematicManager* Manager =
+        AFGSchematicManager::Get(World);
+
+    if (!Manager || !Manager->HasAuthority())
+        return false;
+
+    if (!Manager->IsSchematicPurchased(
+        UContractoryFinalPortalTraversedSchematic::StaticClass()
+    ))
+    {
+        const ESchematicUnlockFlags Flags =
+            ESchematicUnlockFlags::Force |
+            ESchematicUnlockFlags::BlockTelemetry |
+            ESchematicUnlockFlags::SuppressNarrativeMessages;
+
+        Manager->GiveAccessToSchematic(
+            UContractoryFinalPortalTraversedSchematic::StaticClass(),
+            nullptr,
+            Flags
+        );
+    }
+
+    const bool bSuccess =
+        Manager->IsSchematicPurchased(
+            UContractoryFinalPortalTraversedSchematic::StaticClass()
+        );
+
+    UE_LOG(
+        LogTemp,
+        Warning,
+        TEXT(
+            "[CONTRACTORY FINAL] "
+            "Portail final traverse : %s"
+        ),
+        bSuccess ? TEXT("OUI") : TEXT("NON")
+    );
+
+    return bSuccess;
+}
+
+
+// ============================================================
+// DETECTION DE L'ECRAN FINAL
+// ============================================================
+
+static bool Contractory_IsFinalWidget(
+    UUserWidget* Widget,
+    UWorld* World
+)
+{
+    if (!Widget || !World)
+        return false;
+
+    if (Widget->IsTemplate())
+        return false;
+
+    if (Widget->GetWorld() != World)
+        return false;
+
+    if (!Widget->IsInViewport())
+        return false;
+
+    const FString ClassPath =
+        Widget->GetClass()->GetPathName();
+
+    return ClassPath ==
+        TEXT(
+            "/SatisfactoryReverse/UI/"
+            "WBP_Final_Contractory."
+            "WBP_Final_Contractory_C"
+        );
+}
+
+
+// ============================================================
+// SURVEILLANCE DE LA SEQUENCE FINALE
+// ============================================================
+
+void UContractoryFinalSequenceSubsystem::Tick(
+    float DeltaTime
+)
+{
+    UWorld* World = GetWorld();
+
+    if (!World)
+        return;
+
+    if (World->GetNetMode() == NM_DedicatedServer)
+        return;
+
+
+    UUserWidget* Widget =
+        ActiveFinalWidget.Get();
+
+
+    // --------------------------------------------------------
+    // Chercher l'écran final s'il n'est pas déjà suivi
+    // --------------------------------------------------------
+
+    if (!Contractory_IsFinalWidget(Widget, World))
+    {
+        ActiveFinalWidget.Reset();
+
+        FinalWidgetSeenAt = -1.0;
+        bTraversalMarked = false;
+
+        for (TObjectIterator<UUserWidget> It; It; ++It)
+        {
+            UUserWidget* Candidate = *It;
+
+            if (!Contractory_IsFinalWidget(
+                Candidate,
+                World
+            ))
+            {
+                continue;
+            }
+
+            ActiveFinalWidget = Candidate;
+            Widget = Candidate;
+
+            FinalWidgetSeenAt =
+                FPlatformTime::Seconds();
+
+            UE_LOG(
+                LogTemp,
+                Warning,
+                TEXT(
+                    "[CONTRACTORY FINAL] "
+                    "Ecran final detecte"
+                )
+            );
+
+            break;
+        }
+    }
+
+
+    if (!Widget)
+        return;
+
+
+    // --------------------------------------------------------
+    // Dès que la fin Contractory apparaît,
+    // le portail a forcément été traversé.
+    // --------------------------------------------------------
+
+    if (!bTraversalMarked)
+    {
+        bTraversalMarked =
+            UContractoryFinalGateLibrary::
+                MarkFinalPortalTraversed(Widget);
+
+        if (bTraversalMarked)
+        {
+            UE_LOG(
+                LogTemp,
+                Warning,
+                TEXT(
+                    "[CONTRACTORY FINAL] "
+                    "Traversee enregistree"
+                )
+            );
+        }
+    }
+
+
+    if (FinalWidgetSeenAt < 0.0)
+    {
+        FinalWidgetSeenAt =
+            FPlatformTime::Seconds();
+    }
+
+
+    // --------------------------------------------------------
+    // Laisser le joueur lire l'écran final.
+    // --------------------------------------------------------
+
+    constexpr double FinalScreenDuration = 15.0;
+
+    const double Elapsed =
+        FPlatformTime::Seconds()
+        - FinalWidgetSeenAt;
+
+    if (Elapsed < FinalScreenDuration)
+        return;
+
+
+    // --------------------------------------------------------
+    // Fermer l'écran final
+    // --------------------------------------------------------
+
+    APlayerController* PC =
+        Widget->GetOwningPlayer();
+
+    if (!PC)
+    {
+        PC = UGameplayStatics::GetPlayerController(
+            World,
+            0
+        );
+    }
+
+
+    Widget->RemoveFromParent();
+
+
+    // --------------------------------------------------------
+    // Rendre complètement les contrôles au joueur
+    // --------------------------------------------------------
+
+    if (PC)
+    {
+        FInputModeGameOnly InputMode;
+
+        PC->SetInputMode(InputMode);
+
+        PC->bShowMouseCursor = false;
+
+        PC->ResetIgnoreMoveInput();
+        PC->ResetIgnoreLookInput();
+    }
+
+
+    UE_LOG(
+        LogTemp,
+        Warning,
+        TEXT(
+            "[CONTRACTORY FINAL] "
+            "Ecran final ferme - controles rendus au joueur"
+        )
+    );
+
+
+    ActiveFinalWidget.Reset();
+
+    FinalWidgetSeenAt = -1.0;
+    bTraversalMarked = false;
+}

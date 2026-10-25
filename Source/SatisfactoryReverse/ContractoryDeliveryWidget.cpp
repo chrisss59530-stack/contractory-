@@ -1,0 +1,427 @@
+#include "ContractoryDeliveryWidget.h"
+#include "GameFramework/PlayerController.h"
+
+#include "ContractoryPoweredBuildable.h"
+#include "ContractoryMissionRemoteCallObject.h"
+#include "ContractorySecondaryMissions.h"
+
+#include "FGPlayerController.h"
+
+#include "Blueprint/WidgetTree.h"
+#include "Components/VerticalBox.h"
+#include "Components/TextBlock.h"
+
+#include "Engine/World.h"
+
+namespace
+{
+    bool FindDeliveryMissionDefinition(
+        int32 MissionId,
+        FContractoryMissionDefinition& OutDefinition
+    )
+    {
+        for (
+            const FContractoryMissionDefinition& Definition :
+            UContractorySecondaryMissions::GetMissionCatalogue()
+        )
+        {
+            if (Definition.MissionId == MissionId)
+            {
+                OutDefinition = Definition;
+                return true;
+            }
+        }
+
+        return false;
+    }
+}
+
+TSharedRef<SWidget> UContractoryDeliveryWidget::RebuildWidget()
+{
+    if (WidgetTree && !WidgetTree->RootWidget)
+    {
+        BuildDeliveryInterface();
+    }
+
+    return Super::RebuildWidget();
+}
+
+void UContractoryDeliveryWidget::SetInputMode_Implementation()
+{
+    Super::SetInputMode_Implementation();
+
+    APlayerController* PlayerController =
+        GetOwningPlayer();
+
+    if (!PlayerController)
+    {
+        return;
+    }
+
+    PlayerController->bShowMouseCursor = true;
+    PlayerController->SetIgnoreLookInput(true);
+    PlayerController->SetIgnoreMoveInput(true);
+
+    FInputModeGameAndUI InputMode;
+
+    InputMode.SetWidgetToFocus(
+        TakeWidget()
+    );
+
+    InputMode.SetHideCursorDuringCapture(false);
+
+    InputMode.SetLockMouseToViewportBehavior(
+        EMouseLockMode::DoNotLock
+    );
+
+    PlayerController->SetInputMode(
+        InputMode
+    );
+}
+
+void UContractoryDeliveryWidget::NativeConstruct()
+{
+    Super::NativeConstruct();
+
+    if (!WidgetTree)
+    {
+        return;
+    }
+
+    if (!WidgetTree->RootWidget)
+    {
+        BuildDeliveryInterface();
+    }
+
+    BindMissionRemoteCallObject();
+
+    if (UWorld* World = GetWorld())
+    {
+        World->GetTimerManager().SetTimer(
+            MissionStatePollTimer,
+            this,
+            &UContractoryDeliveryWidget::PollMissionState,
+            0.5f,
+            true,
+            0.5f
+        );
+    }
+
+    RefreshMissionInterface();
+}
+
+void UContractoryDeliveryWidget::NativeDestruct()
+{
+    if (UWorld* World = GetWorld())
+    {
+        World->GetTimerManager().ClearTimer(
+            MissionStatePollTimer
+        );
+    }
+
+    if (MissionRCO)
+    {
+        MissionRCO->OnMissionStateUpdated.RemoveAll(this);
+    }
+
+    Super::NativeDestruct();
+}
+
+void UContractoryDeliveryWidget::BuildDeliveryInterface()
+{
+    MainBox =
+        WidgetTree->ConstructWidget<UVerticalBox>(
+            UVerticalBox::StaticClass(),
+            TEXT("ContractoryDeliveryMainBox")
+        );
+
+    WidgetTree->RootWidget = MainBox;
+
+    UTextBlock* Title =
+        WidgetTree->ConstructWidget<UTextBlock>(
+            UTextBlock::StaticClass(),
+            TEXT("ContractoryDeliveryTitle")
+        );
+
+    Title->SetText(
+        FText::FromString(
+            TEXT("LIVRAISON CONTRACTORY")
+        )
+    );
+
+    MainBox->AddChildToVerticalBox(
+        Title
+    );
+
+    PowerStatusText =
+        WidgetTree->ConstructWidget<UTextBlock>(
+            UTextBlock::StaticClass(),
+            TEXT("ContractoryDeliveryPowerStatus")
+        );
+
+    MainBox->AddChildToVerticalBox(
+        PowerStatusText
+    );
+
+    UTextBlock* HelpText =
+        WidgetTree->ConstructWidget<UTextBlock>(
+            UTextBlock::StaticClass(),
+            TEXT("ContractoryDeliveryHelp")
+        );
+
+    HelpText->SetText(
+        FText::FromString(
+            TEXT(
+                "Connecte un convoyeur et livre les ressources "
+                "demandees par les missions actives."
+            )
+        )
+    );
+
+    HelpText->SetAutoWrapText(true);
+
+    MainBox->AddChildToVerticalBox(
+        HelpText
+    );
+
+    UTextBlock* MissionHeader =
+        WidgetTree->ConstructWidget<UTextBlock>(
+            UTextBlock::StaticClass(),
+            TEXT("ContractoryDeliveryMissionHeader")
+        );
+
+    MissionHeader->SetText(
+        FText::FromString(
+            TEXT("MISSIONS ACTIVES")
+        )
+    );
+
+    MainBox->AddChildToVerticalBox(
+        MissionHeader
+    );
+
+    MissionTexts.Empty();
+
+    for (int32 Index = 0; Index < 3; ++Index)
+    {
+        UTextBlock* MissionText =
+            WidgetTree->ConstructWidget<UTextBlock>(
+                UTextBlock::StaticClass(),
+                *FString::Printf(
+                    TEXT("ContractoryDeliveryMission_%d"),
+                    Index
+                )
+            );
+
+        MissionText->SetAutoWrapText(true);
+
+        MissionText->SetText(
+            FText::FromString(
+                TEXT("-")
+            )
+        );
+
+        MissionTexts.Add(
+            MissionText
+        );
+
+        MainBox->AddChildToVerticalBox(
+            MissionText
+        );
+    }
+}
+
+void UContractoryDeliveryWidget::
+BindMissionRemoteCallObject()
+{
+    AFGPlayerController* PlayerController =
+        Cast<AFGPlayerController>(
+            GetOwningPlayer()
+        );
+
+    if (!PlayerController)
+    {
+        UE_LOG(
+            LogTemp,
+            Warning,
+            TEXT(
+                "[Contractory Livraison] "
+                "Owning AFGPlayerController introuvable."
+            )
+        );
+
+        return;
+    }
+
+    MissionRCO =
+        Cast<UContractoryMissionRemoteCallObject>(
+            PlayerController->
+                GetRemoteCallObjectOfClass(
+                    UContractoryMissionRemoteCallObject::
+                        StaticClass()
+                )
+        );
+
+    if (!MissionRCO)
+    {
+        UE_LOG(
+            LogTemp,
+            Warning,
+            TEXT(
+                "[Contractory Livraison] "
+                "Mission RCO introuvable."
+            )
+        );
+
+        return;
+    }
+
+    MissionRCO->
+        OnMissionStateUpdated.RemoveAll(this);
+
+    MissionRCO->
+        OnMissionStateUpdated.AddUObject(
+            this,
+            &UContractoryDeliveryWidget::
+                RefreshMissionInterface
+        );
+
+    RefreshMissionInterface();
+
+    MissionRCO->
+        Server_RequestMissionState();
+}
+
+void UContractoryDeliveryWidget::
+PollMissionState()
+{
+    if (MissionRCO)
+    {
+        MissionRCO->
+            Server_RequestMissionState();
+    }
+
+    RefreshMissionInterface();
+}
+
+bool UContractoryDeliveryWidget::
+IsDeliveryPowered() const
+{
+    const AContractoryPoweredBuildable* Delivery =
+        Cast<AContractoryPoweredBuildable>(
+            mInteractObject
+        );
+
+    return
+        Delivery &&
+        Delivery->HasContractoryPower();
+}
+
+void UContractoryDeliveryWidget::
+RefreshMissionInterface()
+{
+    const bool bPowered =
+        IsDeliveryPowered();
+
+    if (PowerStatusText)
+    {
+        PowerStatusText->SetText(
+            FText::FromString(
+                bPowered
+                    ? TEXT("ALIMENTATION : ACTIVE")
+                    : TEXT("ALIMENTATION : HORS TENSION")
+            )
+        );
+    }
+
+    if (!MissionRCO)
+    {
+        for (
+            UTextBlock* MissionText :
+            MissionTexts
+        )
+        {
+            if (MissionText)
+            {
+                MissionText->SetText(
+                    FText::FromString(
+                        TEXT("Chargement...")
+                    )
+                );
+            }
+        }
+
+        return;
+    }
+
+    const TArray<FContractoryActiveMission>&
+        ActiveMissions =
+            MissionRCO->
+                GetCachedActiveMissions();
+
+    for (
+        int32 Index = 0;
+        Index < MissionTexts.Num();
+        ++Index
+    )
+    {
+        UTextBlock* MissionText =
+            MissionTexts[Index];
+
+        if (!MissionText)
+        {
+            continue;
+        }
+
+        if (!ActiveMissions.IsValidIndex(Index))
+        {
+            MissionText->SetText(
+                FText::FromString(
+                    TEXT("- Aucun contrat actif -")
+                )
+            );
+
+            continue;
+        }
+
+        const FContractoryActiveMission& Active =
+            ActiveMissions[Index];
+
+        FContractoryMissionDefinition Definition;
+
+        if (
+            !FindDeliveryMissionDefinition(
+                Active.MissionId,
+                Definition
+            )
+        )
+        {
+            MissionText->SetText(
+                FText::FromString(
+                    FString::Printf(
+                        TEXT(
+                            "Mission %d : %d livres"
+                        ),
+                        Active.MissionId,
+                        Active.DeliveredAmount
+                    )
+                )
+            );
+
+            continue;
+        }
+
+        MissionText->SetText(
+            FText::FromString(
+                FString::Printf(
+                    TEXT(
+                        "%s : %d / %d"
+                    ),
+                    *Definition.Title.ToString(),
+                    Active.DeliveredAmount,
+                    Definition.TargetAmount
+                )
+            )
+        );
+    }
+}

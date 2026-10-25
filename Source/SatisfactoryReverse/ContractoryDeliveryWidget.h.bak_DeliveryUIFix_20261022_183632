@@ -1,0 +1,45 @@
+#pragma once
+
+#include "CoreMinimal.h"
+#include "TimerManager.h"
+#include "UI/FGInteractWidget.h"
+#include "ContractoryDeliveryWidget.generated.h"
+
+class UVerticalBox;
+class UTextBlock;
+class UContractoryMissionRemoteCallObject;
+
+UCLASS()
+class SATISFACTORYREVERSE_API UContractoryDeliveryWidget
+    : public UFGInteractWidget
+{
+    GENERATED_BODY()
+
+protected:
+    virtual void NativeConstruct() override;
+    virtual void NativeDestruct() override;
+
+private:
+    void BuildDeliveryInterface();
+    void BindMissionRemoteCallObject();
+    void RefreshMissionInterface();
+    void PollMissionState();
+
+    bool IsDeliveryPowered() const;
+
+private:
+
+    UPROPERTY(Transient)
+    TObjectPtr<UVerticalBox> MainBox;
+
+    UPROPERTY(Transient)
+    TObjectPtr<UTextBlock> PowerStatusText;
+
+    UPROPERTY(Transient)
+    TArray<TObjectPtr<UTextBlock>> MissionTexts;
+
+    UPROPERTY(Transient)
+    TObjectPtr<UContractoryMissionRemoteCallObject> MissionRCO;
+
+    FTimerHandle MissionStatePollTimer;
+};

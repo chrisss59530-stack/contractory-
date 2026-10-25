@@ -1,0 +1,28 @@
+﻿#pragma once
+
+#include "CoreMinimal.h"
+#include "Subsystem/ModSubsystem.h"
+#include "TimerManager.h"
+#include "ContractoryMissionSubsystem.generated.h"
+
+class AContractoryMissionSaveManager;
+
+UCLASS()
+class SATISFACTORYREVERSE_API AContractoryMissionSubsystem : public AModSubsystem
+{
+    GENERATED_BODY()
+
+public:
+    AContractoryMissionSubsystem();
+
+protected:
+    virtual void Init() override;
+
+private:
+    void TryUnlockContractoryMachines();
+
+    UPROPERTY(Transient)
+    TObjectPtr<AContractoryMissionSaveManager> MissionSaveManager;
+
+    FTimerHandle MachineUnlockRetryTimer;
+};

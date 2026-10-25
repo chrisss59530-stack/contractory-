@@ -1,0 +1,510 @@
+#include "ContractoryDeliveryBuildable.h"
+
+#include "Components/SceneComponent.h"
+#include "EngineUtils.h"
+#include "Engine/World.h"
+
+#include "FGInventoryComponent.h"
+#include "FGFactoryConnectionComponent.h"
+#include "Resources/FGItemDescriptor.h"
+
+#include "ContractoryMissionSaveManager.h"
+#include "ContractoryMissionManager.h"
+#include "ContractorySecondaryMissions.h"
+
+namespace
+{
+    bool FindContractoryMissionDefinition(
+        int32 MissionId,
+        FContractoryMissionDefinition& OutDefinition
+    )
+    {
+        for (
+            const FContractoryMissionDefinition& Definition :
+            UContractorySecondaryMissions::GetMissionCatalogue()
+        )
+        {
+            if (Definition.MissionId == MissionId)
+            {
+                OutDefinition = Definition;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    FString GetContractoryItemKey(UClass* ItemClass)
+    {
+        if (!ItemClass)
+        {
+            return FString();
+        }
+
+        FString Result = ItemClass->GetName();
+
+        Result.RemoveFromEnd(
+            TEXT("_C")
+        );
+
+        return Result;
+    }
+}
+
+AContractoryDeliveryBuildable::
+AContractoryDeliveryBuildable()
+{
+    // Position de la prise electrique sur le flanc droit
+    PowerAnchor->SetRelativeLocation(
+        FVector(143.0f, 14.0f, 88.0f)
+    );
+
+    PowerAnchor->SetRelativeRotation(
+        FRotator(0.0f, 90.0f, 0.0f)
+    );
+
+    // ============================================================
+    // INVENTAIRE DE LIVRAISON
+    // ============================================================
+
+    DeliveryInventory =
+        CreateDefaultSubobject<UFGInventoryComponent>(
+            TEXT("ContractoryDeliveryInventory")
+        );
+
+    // ============================================================
+    // ENTREE CONVOYEUR
+    // ============================================================
+
+    DeliveryInputAnchor =
+        CreateDefaultSubobject<USceneComponent>(
+            TEXT("ContractoryDeliveryInputAnchor")
+        );
+
+    DeliveryInputAnchor->SetupAttachment(
+        RootComponent
+    );
+
+    DeliveryInputAnchor->SetRelativeLocation(
+        FVector(0.0f, 110.0f, 71.3f)
+    );
+
+    DeliveryInputAnchor->SetRelativeRotation(
+        FRotator(0.0f, 90.0f, 0.0f)
+    );
+
+    DeliveryInputConnection =
+        CreateDefaultSubobject<UFGFactoryConnectionComponent>(
+            TEXT("ContractoryDeliveryInput")
+        );
+
+    DeliveryInputConnection->SetupAttachment(
+        DeliveryInputAnchor
+    );
+
+    DeliveryInputConnection->SetMobility(
+        EComponentMobility::Movable
+    );
+
+    DeliveryInputConnection->SetDirection(
+        EFactoryConnectionDirection::FCD_INPUT
+    );
+
+    DeliveryInputConnection->SetInventory(
+        DeliveryInventory
+    );
+
+    DeliveryInputConnection->SetInventoryAccessIndex(
+        0
+    );
+}
+
+void AContractoryDeliveryBuildable::BeginPlay()
+{
+    Super::BeginPlay();
+
+    // ============================================================
+    // INVENTAIRE : UN SLOT
+    // ============================================================
+
+    if (DeliveryInventory)
+    {
+        if (
+            HasAuthority() &&
+            DeliveryInventory->GetSizeLinear() != 1
+        )
+        {
+            DeliveryInventory->Resize(1);
+        }
+
+        DeliveryInventory->AddArbitrarySlotSize(
+            0,
+            1
+        );
+
+        // Filtre dynamique :
+        // seules les ressources des missions actives sont autorisees.
+        DeliveryInventory->mItemFilter.Unbind();
+
+        DeliveryInventory->mItemFilter.BindUObject(
+            this,
+            &AContractoryDeliveryBuildable::
+                IsDeliveryItemAllowed
+        );
+    }
+
+    // ============================================================
+    // CONNEXION CONVOYEUR
+    // ============================================================
+
+    if (
+        DeliveryInputConnection &&
+        DeliveryInventory
+    )
+    {
+        DeliveryInputConnection->SetDirection(
+            EFactoryConnectionDirection::FCD_INPUT
+        );
+
+        DeliveryInputConnection->SetInventory(
+            DeliveryInventory
+        );
+
+        DeliveryInputConnection->SetInventoryAccessIndex(
+            0
+        );
+    }
+    // CONTRACTORY_DELIVERY_CONNECTION_DIAG
+    if (DeliveryInputConnection)
+    {
+        const FVector ConnectionLocation =
+            DeliveryInputConnection->GetComponentLocation();
+
+        const FRotator ConnectionRotation =
+            DeliveryInputConnection->GetComponentRotation();
+
+        UE_LOG(
+            LogTemp,
+            Warning,
+            TEXT(
+                "[Contractory Delivery Conveyor] "
+                "FactoryConnections=%d "
+                "Direction=%d "
+                "Location=(%.1f %.1f %.1f) "
+                "Rotation=(%.1f %.1f %.1f)"
+            ),
+            GetNumFactoryConnections(),
+            static_cast<int32>(
+                DeliveryInputConnection->GetDirection()
+            ),
+            ConnectionLocation.X,
+            ConnectionLocation.Y,
+            ConnectionLocation.Z,
+            ConnectionRotation.Pitch,
+            ConnectionRotation.Yaw,
+            ConnectionRotation.Roll
+        );
+    }
+ResolveMissionSaveManager();
+
+    UE_LOG(
+        LogTemp,
+        Log,
+        TEXT(
+            "[Contractory] Livraison ready : "
+            "Inventory=%s Connection=%s"
+        ),
+        DeliveryInventory
+            ? *DeliveryInventory->GetName()
+            : TEXT("NONE"),
+        DeliveryInputConnection
+            ? *DeliveryInputConnection->GetName()
+            : TEXT("NONE")
+    );
+}
+
+void AContractoryDeliveryBuildable::
+Tick(float DeltaSeconds)
+{
+    Super::Tick(DeltaSeconds);
+
+    if (!HasAuthority())
+    {
+        return;
+    }
+
+    if (!HasContractoryPower())
+    {
+        return;
+    }
+
+    ProcessDeliveryInventory();
+}
+
+AContractoryMissionSaveManager*
+AContractoryDeliveryBuildable::
+ResolveMissionSaveManager()
+{
+    if (IsValid(MissionSaveManager))
+    {
+        return MissionSaveManager;
+    }
+
+    UWorld* World = GetWorld();
+
+    if (!World)
+    {
+        return nullptr;
+    }
+
+    for (
+        TActorIterator<AContractoryMissionSaveManager> It(World);
+        It;
+        ++It
+    )
+    {
+        MissionSaveManager = *It;
+        break;
+    }
+
+    return MissionSaveManager;
+}
+
+bool AContractoryDeliveryBuildable::
+IsDeliveryItemAllowed(
+    TSubclassOf<UObject> ItemClass,
+    int32 Index
+)
+{
+    // Uniquement le slot 0.
+    if (Index != INDEX_NONE && Index != 0)
+    {
+        return false;
+    }
+
+    // Machine sans courant = aucun objet accepte.
+    if (!HasContractoryPower())
+    {
+        return false;
+    }
+
+    UClass* RawClass = ItemClass.Get();
+
+    if (
+        !RawClass ||
+        !RawClass->IsChildOf(
+            UFGItemDescriptor::StaticClass()
+        )
+    )
+    {
+        return false;
+    }
+
+    AContractoryMissionSaveManager* Manager =
+ResolveMissionSaveManager();
+
+    if (!Manager)
+    {
+        return false;
+    }
+
+    const FContractoryPlayerMissionState* State =
+        Manager->FindPlayer(
+            TEXT("CONTRACTORY_SHARED")
+        );
+
+    if (!State)
+    {
+        return false;
+    }
+
+    const FString ItemKey =
+        GetContractoryItemKey(RawClass);
+
+    if (ItemKey.IsEmpty())
+    {
+        return false;
+    }
+
+    // Accepte si AU MOINS UNE mission active commune
+    // demande encore cet objet.
+    for (
+        const FContractoryActiveMission& Active :
+        State->Session.ActiveMissions
+    )
+    {
+        FContractoryMissionDefinition Definition;
+
+        if (
+            !FindContractoryMissionDefinition(
+                Active.MissionId,
+                Definition
+            )
+        )
+        {
+            continue;
+        }
+
+        if (
+            Definition.TargetItemKey == ItemKey &&
+            Active.DeliveredAmount <
+                Definition.TargetAmount
+        )
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void AContractoryDeliveryBuildable::
+ProcessDeliveryInventory()
+{
+    if (
+        !DeliveryInventory ||
+        !HasContractoryPower()
+    )
+    {
+        return;
+    }
+
+    AContractoryMissionSaveManager* Manager =
+ResolveMissionSaveManager();
+
+    if (!Manager)
+    {
+        return;
+    }
+
+    FContractoryPlayerMissionState* State =
+        Manager->FindOrAddServerPlayer(
+            TEXT("CONTRACTORY_SHARED")
+        );
+
+    if (!State)
+    {
+        return;
+    }
+
+    FInventoryStack Stack;
+
+    if (
+        !DeliveryInventory->GetStackFromIndex(
+            0,
+            Stack
+        )
+    )
+    {
+        return;
+    }
+
+    if (
+        Stack.NumItems <= 0 ||
+        !Stack.Item.GetItemClass()
+    )
+    {
+        return;
+    }
+
+    UClass* ItemClass =
+        Stack.Item.GetItemClass().Get();
+
+    const FString ItemKey =
+        GetContractoryItemKey(ItemClass);
+
+    if (ItemKey.IsEmpty())
+    {
+        return;
+    }
+
+    int32 RemainingItems =
+        Stack.NumItems;
+
+    int32 AcceptedItems = 0;
+
+    // Une meme ressource peut servir a plusieurs missions actives.
+    // On remplit la premiere, puis la suivante si necessaire.
+    for (
+        FContractoryActiveMission& Active :
+        State->Session.ActiveMissions
+    )
+    {
+        if (RemainingItems <= 0)
+        {
+            break;
+        }
+
+        FContractoryMissionDefinition Definition;
+
+        if (
+            !FindContractoryMissionDefinition(
+                Active.MissionId,
+                Definition
+            )
+        )
+        {
+            continue;
+        }
+
+        if (Definition.TargetItemKey != ItemKey)
+        {
+            continue;
+        }
+
+        const int32 RemainingMission =
+            Definition.TargetAmount -
+            Active.DeliveredAmount;
+
+        if (RemainingMission <= 0)
+        {
+            continue;
+        }
+
+        const int32 Quantity =
+            FMath::Min(
+                RemainingItems,
+                RemainingMission
+            );
+
+        if (
+            UContractoryMissionManager::
+                RecordVerifiedDelivery(
+                    State->Session,
+                    Active.MissionId,
+                    Quantity
+                )
+        )
+        {
+            AcceptedItems += Quantity;
+            RemainingItems -= Quantity;
+
+            UE_LOG(
+                LogTemp,
+                Log,
+                TEXT(
+                    "[Contractory] Livraison : "
+                    "Mission=%d Item=%s +%d"
+                ),
+                Active.MissionId,
+                *ItemKey,
+                Quantity
+            );
+        }
+    }
+
+    if (AcceptedItems <= 0)
+    {
+        return;
+    }
+
+    // Les ressources validees disparaissent physiquement
+    // de la machine.
+    DeliveryInventory->RemoveFromIndex(
+        0,
+        AcceptedItems
+    );
+
+    // Replication de la progression commune vers les clients.
+    Manager->ForceNetUpdate();
+}

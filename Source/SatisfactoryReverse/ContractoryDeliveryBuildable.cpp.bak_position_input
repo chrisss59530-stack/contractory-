@@ -1,0 +1,106 @@
+﻿#include "ContractoryDeliveryBuildable.h"
+
+#include "Components/SceneComponent.h"
+
+#include "FGInventoryComponent.h"
+#include "FGFactoryConnectionComponent.h"
+
+AContractoryDeliveryBuildable::
+AContractoryDeliveryBuildable()
+{
+    // ============================================================
+    // INVENTAIRE DE RECEPTION
+    // ============================================================
+
+    DeliveryInventory =
+        CreateDefaultSubobject<UFGInventoryComponent>(
+            TEXT("ContractoryDeliveryInventory")
+        );
+
+    // ============================================================
+    // ANCRAGE ENTREE CONVOYEUR
+    // ============================================================
+
+    DeliveryInputAnchor =
+        CreateDefaultSubobject<USceneComponent>(
+            TEXT("ContractoryDeliveryInputAnchor")
+        );
+
+    DeliveryInputAnchor->SetupAttachment(
+        RootComponent
+    );
+
+    // ============================================================
+    // VRAIE CONNEXION CONVOYEUR SATISFACTORY
+    // ============================================================
+
+    DeliveryInputConnection =
+        CreateDefaultSubobject<UFGFactoryConnectionComponent>(
+            TEXT("ContractoryDeliveryInput")
+        );
+
+    DeliveryInputConnection->SetupAttachment(
+        DeliveryInputAnchor
+    );
+
+    DeliveryInputConnection->SetMobility(
+        EComponentMobility::Movable
+    );
+
+    DeliveryInputConnection->SetDirection(
+        EFactoryConnectionDirection::FCD_INPUT
+    );
+
+    DeliveryInputConnection->SetInventory(
+        DeliveryInventory
+    );
+
+    DeliveryInputConnection->SetInventoryAccessIndex(
+        0
+    );
+}
+
+void AContractoryDeliveryBuildable::BeginPlay()
+{
+    Super::BeginPlay();
+
+    if (DeliveryInventory)
+    {
+        if (HasAuthority() &&
+            DeliveryInventory->GetSizeLinear() != 1)
+        {
+            DeliveryInventory->Resize(1);
+        }
+    }
+
+    if (DeliveryInputConnection &&
+        DeliveryInventory)
+    {
+        DeliveryInputConnection->SetDirection(
+            EFactoryConnectionDirection::FCD_INPUT
+        );
+
+        DeliveryInputConnection->SetInventory(
+            DeliveryInventory
+        );
+
+        DeliveryInputConnection->SetInventoryAccessIndex(
+            0
+        );
+    }
+
+    UE_LOG(
+        LogTemp,
+        Log,
+        TEXT(
+            "[Contractory] Livraison input ready : "
+            "Inventory=%s Connection=%s"
+        ),
+        DeliveryInventory
+            ? *DeliveryInventory->GetName()
+            : TEXT("NONE"),
+        DeliveryInputConnection
+            ? *DeliveryInputConnection->GetName()
+            : TEXT("NONE")
+    );
+}

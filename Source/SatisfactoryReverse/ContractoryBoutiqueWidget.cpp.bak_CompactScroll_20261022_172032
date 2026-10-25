@@ -1,0 +1,919 @@
+#include "ContractoryBoutiqueWidget.h"
+#include "GameFramework/PlayerController.h"
+#include "Blueprint/WidgetTree.h"
+#include "Components/Border.h"
+
+#include "ContractoryBoutiqueCatalog.h"
+#include "ContractoryMissionRemoteCallObject.h"
+
+#include "FGPlayerController.h"
+#include "FGSchematic.h"
+#include "FGSchematicManager.h"
+#include "Components/HorizontalBox.h"
+#include "Components/VerticalBoxSlot.h"
+#include "Components/Image.h"
+#include "Components/ScrollBox.h"
+#include "Components/SizeBox.h"
+#include "Components/TextBlock.h"
+#include "Components/VerticalBox.h"
+
+#include "Engine/Texture2D.h"
+#include "Engine/World.h"
+#include "UObject/UObjectGlobals.h"
+
+
+// ============================================================
+// BOUTON D'ACHAT
+// ============================================================
+
+void UContractoryBoutiqueBuyButton::Configure(
+    UContractoryMissionRemoteCallObject* InMissionRCO,
+    const FString& InSchematicClassPath
+)
+{
+    MissionRCO = InMissionRCO;
+    SchematicClassPath = InSchematicClassPath;
+
+    OnClicked.RemoveDynamic(
+        this,
+        &UContractoryBoutiqueBuyButton::HandleClicked
+    );
+
+    OnClicked.AddDynamic(
+        this,
+        &UContractoryBoutiqueBuyButton::HandleClicked
+    );
+}
+
+void UContractoryBoutiqueBuyButton::HandleClicked()
+{
+    if (!MissionRCO ||
+        SchematicClassPath.IsEmpty())
+    {
+        return;
+    }
+
+    MissionRCO->Server_PurchaseBoutiqueSchematic(
+        SchematicClassPath
+    );
+}
+
+
+// ============================================================
+// WIDGET BOUTIQUE
+// ============================================================
+
+TSharedRef<SWidget> UContractoryBoutiqueWidget::RebuildWidget()
+{
+    UE_LOG(
+        LogTemp,
+        Warning,
+        TEXT("[Contractory Boutique UI] RebuildWidget")
+    );
+
+    if (WidgetTree && !WidgetTree->RootWidget)
+    {
+        BuildBoutiqueInterface();
+    }
+
+    return Super::RebuildWidget();
+}
+
+void UContractoryBoutiqueWidget::SetInputMode_Implementation()
+{
+    Super::SetInputMode_Implementation();
+
+    APlayerController* PlayerController = GetOwningPlayer();
+
+    if (!PlayerController)
+    {
+        UE_LOG(
+            LogTemp,
+            Warning,
+            TEXT("[Contractory Boutique UI] PlayerController NULL")
+        );
+        return;
+    }
+
+    PlayerController->bShowMouseCursor = true;
+    PlayerController->SetIgnoreLookInput(true);
+    PlayerController->SetIgnoreMoveInput(true);
+
+    FInputModeGameAndUI InputMode;
+    InputMode.SetWidgetToFocus(TakeWidget());
+    InputMode.SetHideCursorDuringCapture(false);
+    InputMode.SetLockMouseToViewportBehavior(
+        EMouseLockMode::DoNotLock
+    );
+
+    PlayerController->SetInputMode(InputMode);
+
+    UE_LOG(
+        LogTemp,
+        Warning,
+        TEXT("[Contractory Boutique UI] SOURIS ACTIVE / CAMERA BLOQUEE")
+    );
+}
+
+void UContractoryBoutiqueWidget::NativeConstruct()
+{
+    Super::NativeConstruct();
+
+    if (!MainBox)
+    {
+        BuildBoutiqueInterface();
+    }
+
+    BindMissionRemoteCallObject();
+
+    if (UWorld* World = GetWorld())
+    {
+        World->GetTimerManager().SetTimer(
+            BoutiquePollTimer,
+            this,
+            &UContractoryBoutiqueWidget::PollBoutiqueState,
+            0.5f,
+            true
+        );
+    }
+
+    RefreshBoutiqueInterface();
+}
+
+void UContractoryBoutiqueWidget::NativeDestruct()
+{
+    if (UWorld* World = GetWorld())
+    {
+        World->GetTimerManager().ClearTimer(
+            BoutiquePollTimer
+        );
+    }
+
+    if (MissionRCO)
+    {
+        MissionRCO->OnMissionStateUpdated.RemoveAll(this);
+        MissionRCO->OnBoutiquePurchaseResult.RemoveAll(this);
+    }
+
+    Super::NativeDestruct();
+}
+
+void UContractoryBoutiqueWidget::BuildBoutiqueInterface()
+{
+    if (!WidgetTree)
+    {
+        return;
+    }
+
+    MainBox =
+        WidgetTree->ConstructWidget<UVerticalBox>(
+            UVerticalBox::StaticClass(),
+            TEXT("ContractoryBoutiqueMain")
+        );
+
+    WidgetTree->RootWidget = MainBox;
+
+    // --------------------------------------------------------
+    // TITRE
+    // --------------------------------------------------------
+
+    UTextBlock* Title =
+        WidgetTree->ConstructWidget<UTextBlock>(
+            UTextBlock::StaticClass(),
+            TEXT("BoutiqueTitle")
+        );
+
+    Title->SetText(
+        FText::FromString(
+            TEXT("BOUTIQUE CONTRACTORY")
+        )
+    );
+
+    MainBox->AddChildToVerticalBox(Title);
+
+    // --------------------------------------------------------
+    // CREDITS
+    // --------------------------------------------------------
+
+    CreditsText =
+        WidgetTree->ConstructWidget<UTextBlock>(
+            UTextBlock::StaticClass(),
+            TEXT("BoutiqueCredits")
+        );
+
+    CreditsText->SetText(
+        FText::FromString(
+            TEXT("Credits FICSIT : chargement...")
+        )
+    );
+
+    MainBox->AddChildToVerticalBox(CreditsText);
+
+    // --------------------------------------------------------
+    // MESSAGE RESULTAT
+    // --------------------------------------------------------
+
+    ResultText =
+        WidgetTree->ConstructWidget<UTextBlock>(
+            UTextBlock::StaticClass(),
+            TEXT("BoutiqueResult")
+        );
+
+    ResultText->SetText(
+        FText::FromString(
+            TEXT("Selectionnez une recherche a acheter.")
+        )
+    );
+
+    ResultText->SetAutoWrapText(true);
+
+    MainBox->AddChildToVerticalBox(ResultText);
+
+    // --------------------------------------------------------
+    // SCROLL CATALOGUE
+    // --------------------------------------------------------
+
+    CatalogueScroll =
+        WidgetTree->ConstructWidget<UScrollBox>(
+            UScrollBox::StaticClass(),
+            TEXT("BoutiqueCatalogue")
+        );
+
+    CatalogueScroll->SetOrientation(EOrientation::Orient_Vertical);
+CatalogueScroll->SetScrollBarVisibility(ESlateVisibility::Visible);
+CatalogueScroll->SetConsumeMouseWheel(EConsumeMouseWheel::Always);
+CatalogueScroll->SetWheelScrollMultiplier(64.0f);
+
+if (UVerticalBoxSlot* CatalogueSlot =
+    MainBox->AddChildToVerticalBox(CatalogueScroll))
+{
+    CatalogueSlot->SetSize(
+        FSlateChildSize(ESlateSizeRule::Fill)
+    );
+
+    CatalogueSlot->SetPadding(
+        FMargin(0.0f, 8.0f, 0.0f, 0.0f)
+    );
+}
+
+    EntryStatusTexts.Reset();
+    EntryButtonTexts.Reset();
+    BuyButtons.Reset();
+    SchematicClasses.Reset();
+    SchematicPaths.Reset();
+    EntryPrices.Reset();
+
+    const TArray<FContractoryBoutiqueEntry> Catalogue =
+        UContractoryBoutiqueCatalog::GetCatalogue();
+
+    FString LastCategory;
+
+    for (int32 Index = 0;
+         Index < Catalogue.Num();
+         ++Index)
+    {
+        const FContractoryBoutiqueEntry& Entry =
+            Catalogue[Index];
+
+        // ----------------------------------------------------
+        // TITRE DE CATEGORIE
+        // ----------------------------------------------------
+
+        if (Entry.Category != LastCategory)
+        {
+            LastCategory = Entry.Category;
+
+            UTextBlock* CategoryTitle =
+                WidgetTree->ConstructWidget<UTextBlock>(
+                    UTextBlock::StaticClass()
+                );
+
+            CategoryTitle->SetText(
+                FText::FromString(
+                    FString::Printf(
+                        TEXT("=== %s ==="),
+                        *Entry.Category
+                    )
+                )
+            );
+
+            CatalogueScroll->AddChild(
+                CategoryTitle
+            );
+        }
+
+        // ----------------------------------------------------
+        // CHARGEMENT DU VRAI SCHEMATIC VANILLA
+        // ----------------------------------------------------
+
+        TSubclassOf<UFGSchematic> SchematicClass =
+            LoadClass<UFGSchematic>(
+                nullptr,
+                *Entry.SchematicClassPath
+            );
+
+        SchematicClasses.Add(SchematicClass);
+        SchematicPaths.Add(Entry.SchematicClassPath);
+        EntryPrices.Add(Entry.PriceCredits);
+
+        // ----------------------------------------------------
+        // CARTE BOUTIQUE CONTRACTORY
+        // Base visuelle inspiree de l'AWESOME Shop
+        // ----------------------------------------------------
+
+        UBorder* Card =
+            WidgetTree->ConstructWidget<UBorder>(
+                UBorder::StaticClass()
+            );
+
+        Card->SetPadding(
+            FMargin(
+                12.0f,
+                10.0f,
+                12.0f,
+                10.0f
+            )
+        );
+
+        Card->SetBrushColor(
+            FLinearColor(
+                0.035f,
+                0.045f,
+                0.055f,
+                0.96f
+            )
+        );
+
+        CatalogueScroll->AddChild(
+            Card
+        );
+
+        UHorizontalBox* Row =
+            WidgetTree->ConstructWidget<UHorizontalBox>(
+                UHorizontalBox::StaticClass()
+            );
+
+        Card->AddChild(
+            Row
+        );
+
+        // ----------------------------------------------------
+        // ICONE REELLE DU SCHEMATIC MAM
+        // ----------------------------------------------------
+
+        USizeBox* IconSize =
+            WidgetTree->ConstructWidget<USizeBox>(
+                USizeBox::StaticClass()
+            );
+
+        IconSize->SetWidthOverride(
+            72.0f
+        );
+
+        IconSize->SetHeightOverride(
+            72.0f
+        );
+
+        UImage* IconImage =
+            WidgetTree->ConstructWidget<UImage>(
+                UImage::StaticClass()
+            );
+
+        IconSize->AddChild(
+            IconImage
+        );
+
+        Row->AddChildToHorizontalBox(
+            IconSize
+        );
+
+        USizeBox* IconGap =
+            WidgetTree->ConstructWidget<USizeBox>(
+                USizeBox::StaticClass()
+            );
+
+        IconGap->SetWidthOverride(
+            14.0f
+        );
+
+        Row->AddChildToHorizontalBox(
+            IconGap
+        );
+
+        // ----------------------------------------------------
+        // INFORMATIONS
+        // ----------------------------------------------------
+
+        USizeBox* InformationSize =
+            WidgetTree->ConstructWidget<USizeBox>(
+                USizeBox::StaticClass()
+            );
+
+        InformationSize->SetWidthOverride(
+            520.0f
+        );
+
+        UVerticalBox* Information =
+            WidgetTree->ConstructWidget<UVerticalBox>(
+                UVerticalBox::StaticClass()
+            );
+
+        InformationSize->AddChild(
+            Information
+        );
+
+        Row->AddChildToHorizontalBox(
+            InformationSize
+        );
+
+        // Nom de la recherche MAM
+
+        UTextBlock* NameText =
+            WidgetTree->ConstructWidget<UTextBlock>(
+                UTextBlock::StaticClass()
+            );
+
+        NameText->SetAutoWrapText(
+            true
+        );
+
+        Information->AddChildToVerticalBox(
+            NameText
+        );
+
+        // Description du schematic
+
+        UTextBlock* DescriptionText =
+            WidgetTree->ConstructWidget<UTextBlock>(
+                UTextBlock::StaticClass()
+            );
+
+        DescriptionText->SetAutoWrapText(
+            true
+        );
+
+        Information->AddChildToVerticalBox(
+            DescriptionText
+        );
+
+        // Prix / etat
+
+        UTextBlock* StatusText =
+            WidgetTree->ConstructWidget<UTextBlock>(
+                UTextBlock::StaticClass()
+            );
+
+        StatusText->SetAutoWrapText(
+            true
+        );
+
+        Information->AddChildToVerticalBox(
+            StatusText
+        );
+
+        EntryStatusTexts.Add(
+            StatusText
+        );
+
+        // ----------------------------------------------------
+        // ESPACE AVANT BOUTON
+        // ----------------------------------------------------
+
+        USizeBox* ButtonGap =
+            WidgetTree->ConstructWidget<USizeBox>(
+                USizeBox::StaticClass()
+            );
+
+        ButtonGap->SetWidthOverride(
+            16.0f
+        );
+
+        Row->AddChildToHorizontalBox(
+            ButtonGap
+        );
+
+        // ----------------------------------------------------
+        // BOUTON ACHETER
+        // ----------------------------------------------------
+
+        UContractoryBoutiqueBuyButton* BuyButton =
+            WidgetTree->ConstructWidget<
+                UContractoryBoutiqueBuyButton
+            >(
+                UContractoryBoutiqueBuyButton::StaticClass()
+            );
+
+        UTextBlock* BuyButtonText =
+            WidgetTree->ConstructWidget<UTextBlock>(
+                UTextBlock::StaticClass()
+            );
+
+        BuyButtonText->SetText(
+            FText::FromString(
+                TEXT("ACHETER")
+            )
+        );
+
+        BuyButton->AddChild(
+            BuyButtonText
+        );
+
+        Row->AddChildToHorizontalBox(
+            BuyButton
+        );
+
+        BuyButtons.Add(
+            BuyButton
+        );
+
+        EntryButtonTexts.Add(
+            BuyButtonText
+        );
+
+        // ----------------------------------------------------
+        // DONNEES VANILLA DU SCHEMATIC
+        // ----------------------------------------------------
+
+        if (SchematicClass)
+        {
+            NameText->SetText(
+                UFGSchematic::GetSchematicDisplayName(
+                    SchematicClass
+                )
+            );
+
+            DescriptionText->SetText(
+                UFGSchematic::GetSchematicDescription(
+                    SchematicClass
+                )
+            );
+
+            const FSlateBrush ItemIcon =
+                UFGSchematic::GetItemIcon(
+                    SchematicClass
+                );
+
+            IconImage->SetBrush(
+                ItemIcon
+            );
+
+            Card->SetToolTipText(
+                UFGSchematic::GetSchematicDescription(
+                    SchematicClass
+                )
+            );
+        }
+        else
+        {
+            NameText->SetText(
+                FText::FromString(
+                    Entry.SchematicClassPath
+                )
+            );
+
+            DescriptionText->SetText(
+                FText::FromString(
+                    TEXT("Schematic indisponible")
+                )
+            );
+        }
+
+        StatusText->SetText(
+            FText::FromString(
+                FString::Printf(
+                    TEXT("PRIX : %d CREDITS CONTRACTORY"),
+                    Entry.PriceCredits
+                )
+            )
+        );
+
+        // Espace vertical entre deux cartes
+
+        USizeBox* CardGap =
+            WidgetTree->ConstructWidget<USizeBox>(
+                USizeBox::StaticClass()
+            );
+
+        CardGap->SetHeightOverride(
+            6.0f
+        );
+
+        CatalogueScroll->AddChild(
+            CardGap
+        );
+    }
+}
+
+void UContractoryBoutiqueWidget::
+BindMissionRemoteCallObject()
+{
+    AFGPlayerController* PlayerController =
+        Cast<AFGPlayerController>(
+            GetOwningPlayer()
+        );
+
+    if (!PlayerController)
+    {
+        return;
+    }
+
+    MissionRCO =
+        Cast<UContractoryMissionRemoteCallObject>(
+            PlayerController->GetRemoteCallObjectOfClass(
+                UContractoryMissionRemoteCallObject::
+                    StaticClass()
+            )
+        );
+
+    if (!MissionRCO)
+    {
+        return;
+    }
+
+    MissionRCO->OnMissionStateUpdated.RemoveAll(this);
+    MissionRCO->OnBoutiquePurchaseResult.RemoveAll(this);
+
+    MissionRCO->OnMissionStateUpdated.AddUObject(
+        this,
+        &UContractoryBoutiqueWidget::
+            RefreshBoutiqueInterface
+    );
+
+    MissionRCO->OnBoutiquePurchaseResult.AddUObject(
+        this,
+        &UContractoryBoutiqueWidget::
+            HandleBoutiquePurchaseResult
+    );
+
+    for (int32 Index = 0;
+         Index < BuyButtons.Num();
+         ++Index)
+    {
+        if (!BuyButtons.IsValidIndex(Index) ||
+            !SchematicPaths.IsValidIndex(Index))
+        {
+            continue;
+        }
+
+        if (BuyButtons[Index])
+        {
+            BuyButtons[Index]->Configure(
+                MissionRCO,
+                SchematicPaths[Index]
+            );
+        }
+    }
+
+    MissionRCO->Server_RequestMissionState();
+}
+
+void UContractoryBoutiqueWidget::
+PollBoutiqueState()
+{
+    if (!MissionRCO)
+    {
+        BindMissionRemoteCallObject();
+    }
+
+    if (MissionRCO)
+    {
+        MissionRCO->Server_RequestMissionState();
+    }
+
+    RefreshBoutiqueInterface();
+}
+
+void UContractoryBoutiqueWidget::
+RefreshBoutiqueInterface()
+{
+    const int32 Credits =
+        MissionRCO
+            ? MissionRCO->GetCachedCredits()
+            : 0;
+
+    if (CreditsText)
+    {
+        CreditsText->SetText(
+            FText::FromString(
+                FString::Printf(
+                    TEXT("Credits FICSIT : %d"),
+                    Credits
+                )
+            )
+        );
+    }
+
+    AFGSchematicManager* SchematicManager =
+        AFGSchematicManager::Get(
+            GetWorld()
+        );
+
+    for (int32 Index = 0;
+         Index < SchematicClasses.Num();
+         ++Index)
+    {
+        if (!EntryStatusTexts.IsValidIndex(Index) ||
+            !EntryButtonTexts.IsValidIndex(Index) ||
+            !BuyButtons.IsValidIndex(Index) ||
+            !EntryPrices.IsValidIndex(Index))
+        {
+            continue;
+        }
+
+        UTextBlock* StatusText =
+            EntryStatusTexts[Index];
+
+        UTextBlock* ButtonText =
+            EntryButtonTexts[Index];
+
+        UContractoryBoutiqueBuyButton* BuyButton =
+            BuyButtons[Index];
+
+        const int32 Price =
+            EntryPrices[Index];
+
+        TSubclassOf<UFGSchematic> SchematicClass =
+            SchematicClasses[Index];
+
+        if (!StatusText ||
+            !ButtonText ||
+            !BuyButton)
+        {
+            continue;
+        }
+
+        if (!MissionRCO ||
+            !SchematicManager ||
+            !SchematicClass)
+        {
+            StatusText->SetText(
+                FText::FromString(
+                    FString::Printf(
+                        TEXT("Prix : %d | INDISPONIBLE"),
+                        Price
+                    )
+                )
+            );
+
+            ButtonText->SetText(
+                FText::FromString(
+                    TEXT("INDISPONIBLE")
+                )
+            );
+
+            BuyButton->SetIsEnabled(false);
+            continue;
+        }
+
+        const bool bPurchased =
+            SchematicManager->IsSchematicPurchased(
+                SchematicClass
+            );
+
+        if (bPurchased)
+        {
+            StatusText->SetText(
+                FText::FromString(
+                    FString::Printf(
+                        TEXT("Prix : %d | ACHETE"),
+                        Price
+                    )
+                )
+            );
+
+            ButtonText->SetText(
+                FText::FromString(
+                    TEXT("ACHETE")
+                )
+            );
+
+            BuyButton->SetIsEnabled(false);
+            continue;
+        }
+
+        const bool bDependenciesMet =
+            UFGSchematic::CanGiveAccessToSchematic(
+                SchematicClass,
+                GetWorld()
+            );
+
+        if (!bDependenciesMet)
+        {
+            StatusText->SetText(
+                FText::FromString(
+                    FString::Printf(
+                        TEXT("Prix : %d | VERROUILLE"),
+                        Price
+                    )
+                )
+            );
+
+            ButtonText->SetText(
+                FText::FromString(
+                    TEXT("VERROUILLE")
+                )
+            );
+
+            BuyButton->SetIsEnabled(false);
+            continue;
+        }
+
+        if (Credits < Price)
+        {
+            StatusText->SetText(
+                FText::FromString(
+                    FString::Printf(
+                        TEXT(
+                            "Prix : %d | Credits insuffisants"
+                        ),
+                        Price
+                    )
+                )
+            );
+
+            ButtonText->SetText(
+                FText::FromString(
+                    TEXT("CREDITS")
+                )
+            );
+
+            BuyButton->SetIsEnabled(false);
+            continue;
+        }
+
+        StatusText->SetText(
+            FText::FromString(
+                FString::Printf(
+                    TEXT("Prix : %d Credits FICSIT"),
+                    Price
+                )
+            )
+        );
+
+        ButtonText->SetText(
+            FText::FromString(
+                TEXT("ACHETER")
+            )
+        );
+
+        BuyButton->SetIsEnabled(true);
+    }
+}
+
+void UContractoryBoutiqueWidget::
+HandleBoutiquePurchaseResult(
+    bool bSuccess,
+    int32 RemainingCredits,
+    const FString& SchematicClassPath,
+    const FString& FailureReason
+)
+{
+    if (ResultText)
+    {
+        if (bSuccess)
+        {
+            TSubclassOf<UFGSchematic> PurchasedClass =
+                LoadClass<UFGSchematic>(
+                    nullptr,
+                    *SchematicClassPath
+                );
+
+            const FString DisplayName =
+                PurchasedClass
+                    ? UFGSchematic::
+                        GetSchematicDisplayName(
+                            PurchasedClass
+                        ).ToString()
+                    : SchematicClassPath;
+
+            ResultText->SetText(
+                FText::FromString(
+                    FString::Printf(
+                        TEXT(
+                            "ACHAT VALIDE : %s | Credits restants : %d"
+                        ),
+                        *DisplayName,
+                        RemainingCredits
+                    )
+                )
+            );
+        }
+        else
+        {
+            ResultText->SetText(
+                FText::FromString(
+                    FString::Printf(
+                        TEXT(
+                            "ACHAT REFUSE : %s"
+                        ),
+                        *FailureReason
+                    )
+                )
+            );
+        }
+    }
+
+    RefreshBoutiqueInterface();
+}
+
+

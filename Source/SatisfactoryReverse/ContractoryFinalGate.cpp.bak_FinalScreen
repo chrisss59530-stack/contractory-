@@ -1,0 +1,106 @@
+﻿#include "ContractoryFinalGate.h"
+
+#include "FGSchematicManager.h"
+#include "Engine/World.h"
+
+UContractoryFinalPortalTraversedSchematic::
+UContractoryFinalPortalTraversedSchematic()
+{
+    mType = ESchematicType::EST_Custom;
+
+    mDisplayName =
+        FText::FromString(
+            TEXT("Contractory Final Portal Traversed")
+        );
+
+    mDescription =
+        FText::FromString(
+            TEXT("Internal Contractory progression marker")
+        );
+
+    mTechTier = 9;
+    mCost.Reset();
+    mUnlocks.Reset();
+
+    mTimeToComplete = 0.0f;
+    mIsPlayerSpecific = false;
+    mDependenciesBlocksSchematicAccess = false;
+    mHiddenUntilDependenciesMet = true;
+}
+
+
+bool UContractoryFinalGateLibrary::IsFinalPortalTraversed(
+    const UObject* WorldContextObject
+)
+{
+    if (!WorldContextObject)
+        return false;
+
+    UWorld* World = WorldContextObject->GetWorld();
+
+    if (!World)
+        return false;
+
+    AFGSchematicManager* Manager =
+        AFGSchematicManager::Get(World);
+
+    if (!Manager)
+        return false;
+
+    return Manager->IsSchematicPurchased(
+        UContractoryFinalPortalTraversedSchematic::StaticClass()
+    );
+}
+
+
+bool UContractoryFinalGateLibrary::MarkFinalPortalTraversed(
+    const UObject* WorldContextObject
+)
+{
+    if (!WorldContextObject)
+        return false;
+
+    UWorld* World = WorldContextObject->GetWorld();
+
+    if (!World)
+        return false;
+
+    AFGSchematicManager* Manager =
+        AFGSchematicManager::Get(World);
+
+    if (!Manager || !Manager->HasAuthority())
+        return false;
+
+    if (!Manager->IsSchematicPurchased(
+        UContractoryFinalPortalTraversedSchematic::StaticClass()
+    ))
+    {
+        const ESchematicUnlockFlags Flags =
+            ESchematicUnlockFlags::Force |
+            ESchematicUnlockFlags::BlockTelemetry |
+            ESchematicUnlockFlags::SuppressNarrativeMessages;
+
+        Manager->GiveAccessToSchematic(
+            UContractoryFinalPortalTraversedSchematic::StaticClass(),
+            nullptr,
+            Flags
+        );
+    }
+
+    const bool bSuccess =
+        Manager->IsSchematicPurchased(
+            UContractoryFinalPortalTraversedSchematic::StaticClass()
+        );
+
+    UE_LOG(
+        LogTemp,
+        Warning,
+        TEXT(
+            "[CONTRACTORY FINAL] "
+            "Portail final traverse : %s"
+        ),
+        bSuccess ? TEXT("OUI") : TEXT("NON")
+    );
+
+    return bSuccess;
+}

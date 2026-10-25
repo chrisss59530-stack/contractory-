@@ -1,0 +1,114 @@
+#include "ContractoryTerminalWidget.h"
+
+#include "Blueprint/WidgetTree.h"
+#include "Components/VerticalBox.h"
+#include "Components/HorizontalBox.h"
+#include "Components/TextBlock.h"
+#include "Components/Button.h"
+
+void UContractoryTerminalWidget::NativeConstruct()
+{
+    Super::NativeConstruct();
+
+    if (!WidgetTree)
+    {
+        return;
+    }
+
+    if (!WidgetTree->RootWidget)
+    {
+        BuildTerminalInterface();
+    }
+}
+
+void UContractoryTerminalWidget::BuildTerminalInterface()
+{
+    MainBox = WidgetTree->ConstructWidget<UVerticalBox>(
+        UVerticalBox::StaticClass(),
+        TEXT("ContractoryMainBox")
+    );
+
+    WidgetTree->RootWidget = MainBox;
+
+    UTextBlock* Title = WidgetTree->ConstructWidget<UTextBlock>(
+        UTextBlock::StaticClass(),
+        TEXT("ContractoryTitle")
+    );
+    Title->SetText(FText::FromString(TEXT("CONTRACTORY")));
+    MainBox->AddChildToVerticalBox(Title);
+
+    CreditsText = WidgetTree->ConstructWidget<UTextBlock>(
+        UTextBlock::StaticClass(),
+        TEXT("ContractoryCredits")
+    );
+    CreditsText->SetText(FText::FromString(TEXT("Credits : chargement...")));
+    MainBox->AddChildToVerticalBox(CreditsText);
+
+    UTextBlock* OffersTitle = WidgetTree->ConstructWidget<UTextBlock>(
+        UTextBlock::StaticClass(),
+        TEXT("OffersTitle")
+    );
+    OffersTitle->SetText(FText::FromString(TEXT("MISSIONS DISPONIBLES")));
+    MainBox->AddChildToVerticalBox(OffersTitle);
+
+    for (int32 i = 0; i < 5; ++i)
+    {
+        UHorizontalBox* MissionRow =
+            WidgetTree->ConstructWidget<UHorizontalBox>(
+                UHorizontalBox::StaticClass()
+            );
+
+        UTextBlock* MissionText =
+            WidgetTree->ConstructWidget<UTextBlock>(
+                UTextBlock::StaticClass()
+            );
+
+        MissionText->SetText(
+            FText::FromString(
+                FString::Printf(TEXT("Mission %d - chargement..."), i + 1)
+            )
+        );
+
+        UButton* AcceptButton =
+            WidgetTree->ConstructWidget<UButton>(
+                UButton::StaticClass()
+            );
+
+        UTextBlock* ButtonText =
+            WidgetTree->ConstructWidget<UTextBlock>(
+                UTextBlock::StaticClass()
+            );
+
+        ButtonText->SetText(FText::FromString(TEXT("ACCEPTER")));
+        AcceptButton->AddChild(ButtonText);
+
+        MissionRow->AddChildToHorizontalBox(MissionText);
+        MissionRow->AddChildToHorizontalBox(AcceptButton);
+        MainBox->AddChildToVerticalBox(MissionRow);
+    }
+
+    UTextBlock* ActiveTitle =
+        WidgetTree->ConstructWidget<UTextBlock>(
+            UTextBlock::StaticClass(),
+            TEXT("ActiveTitle")
+        );
+
+    ActiveTitle->SetText(FText::FromString(TEXT("MISSIONS ACTIVES")));
+    MainBox->AddChildToVerticalBox(ActiveTitle);
+
+    for (int32 i = 0; i < 3; ++i)
+    {
+        UTextBlock* ActiveMission =
+            WidgetTree->ConstructWidget<UTextBlock>(
+                UTextBlock::StaticClass()
+            );
+
+        ActiveMission->SetText(
+            FText::FromString(
+                FString::Printf(TEXT("Emplacement actif %d"), i + 1)
+            )
+        );
+
+        MainBox->AddChildToVerticalBox(ActiveMission);
+    }
+}
