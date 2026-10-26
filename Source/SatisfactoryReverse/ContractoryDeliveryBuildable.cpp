@@ -10,8 +10,6 @@
 #include "FGCharacterPlayer.h"
 #include "Resources/FGItemDescriptor.h"
 #include "Buildables/FGBuildableConveyorBelt.h"
-#include "ContractoryDeliveryConveyorStub.h"
-
 #include "ContractoryMissionSaveManager.h"
 #include "ContractoryMissionManager.h"
 #include "ContractorySecondaryMissions.h"
@@ -144,7 +142,7 @@ AContractoryDeliveryBuildable()
 
     DeliveryInputConnection =
         CreateDefaultSubobject<UFGFactoryConnectionComponent>(
-            TEXT("Input0")
+            TEXT("ContractoryDeliveryInput")
         );
 
     DeliveryInputConnection->SetupAttachment(
@@ -158,7 +156,7 @@ AContractoryDeliveryBuildable()
     DeliveryInputConnection->SetDirection(
             EFactoryConnectionDirection::FCD_INPUT
         );
-        DeliveryInputConnection->SetConnectorClearance(100.0f);
+        DeliveryInputConnection->SetConnectorClearance(0.0f);
         DeliveryInputConnection->SetForwardPeekAndGrabToBuildable(false);
 
     DeliveryInputConnection->SetInventory(
@@ -317,6 +315,8 @@ void AContractoryDeliveryBuildable::BeginPlay()
 {
     Super::BeginPlay();
 
+
+
     // ============================================================
     // INVENTAIRE : UN SLOT
     // ============================================================
@@ -359,7 +359,7 @@ void AContractoryDeliveryBuildable::BeginPlay()
         DeliveryInputConnection->SetDirection(
             EFactoryConnectionDirection::FCD_INPUT
         );
-        DeliveryInputConnection->SetConnectorClearance(100.0f);
+        DeliveryInputConnection->SetConnectorClearance(0.0f);
         DeliveryInputConnection->SetForwardPeekAndGrabToBuildable(false);
 
         DeliveryInputConnection->SetInventory(
@@ -462,91 +462,8 @@ void AContractoryDeliveryBuildable::Tick(float DeltaSeconds)
     ProcessDeliveryInventory();
 }
 
-void AContractoryDeliveryBuildable::
-WireEmbeddedConveyorStub()
-{
-    if (!DeliveryInputConnection)
-    {
-        return;
-    }
 
-    TArray<UChildActorComponent*> ChildComponents;
 
-    GetComponents<UChildActorComponent>(
-        ChildComponents
-    );
-
-    for (
-        UChildActorComponent* ChildComponent :
-        ChildComponents
-    )
-    {
-        if (!ChildComponent)
-        {
-            continue;
-        }
-
-        const UClass* ChildClass = ChildComponent->GetChildActorClass();
-
-        if (
-            !ChildClass ||
-            !ChildClass->IsChildOf(
-                AContractoryDeliveryConveyorStub::StaticClass()
-            )
-        )
-        {
-            continue;
-        }
-
-        AActor* ChildActor =
-            ChildComponent->GetChildActor();
-
-        AFGBuildableConveyorBelt* EmbeddedBelt =
-            Cast<AFGBuildableConveyorBelt>(
-                ChildActor
-            );
-
-        if (!EmbeddedBelt)
-        {
-            continue;
-        }
-
-        UFGFactoryConnectionComponent* StubOutput =
-            EmbeddedBelt->GetConnection1();
-
-        if (!StubOutput)
-        {
-            return;
-        }
-
-        // Sortie du petit tapis -> inventaire interne Livraison.
-        if (
-            !StubOutput->GetConnection() &&
-            !DeliveryInputConnection->GetConnection()
-        )
-        {
-            StubOutput->SetConnection(
-                DeliveryInputConnection
-            );
-        }
-
-        // Si le Blueprint a ete reparentÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â© vers notre classe
-        // Contractory, sa vitesse suit automatiquement
-        // le convoyeur branche par le joueur.
-        if (
-            AContractoryDeliveryConveyorStub* AdaptiveStub =
-                Cast<AContractoryDeliveryConveyorStub>(
-                    EmbeddedBelt
-                )
-        )
-        {
-            AdaptiveStub->
-                SyncSpeedFromConnectedConveyor();
-        }
-
-        return;
-    }
-}
 AContractoryMissionSaveManager*
 AContractoryDeliveryBuildable::
 ResolveMissionSaveManager()

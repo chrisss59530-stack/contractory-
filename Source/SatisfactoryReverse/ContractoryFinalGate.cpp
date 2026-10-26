@@ -1,6 +1,8 @@
 #include "ContractoryFinalGate.h"
 
 #include "FGSchematicManager.h"
+#include "FGPlayerController.h"
+#include "ContractoryMissionRemoteCallObject.h"
 
 #include "Blueprint/UserWidget.h"
 #include "Engine/World.h"
@@ -163,163 +165,111 @@ static bool Contractory_IsFinalWidget(
 // SURVEILLANCE DE LA SEQUENCE FINALE
 // ============================================================
 
-void UContractoryFinalSequenceSubsystem::Tick(
-    float DeltaTime
-)
+void UContractoryFinalSequenceSubsystem::Tick(float DeltaTime)
 {
     UWorld* World = GetWorld();
 
-    if (!World)
+    if (!World || World->GetNetMode() == NM_DedicatedServer)
         return;
 
-    if (World->GetNetMode() == NM_DedicatedServer)
-        return;
+    UUserWidget* Widget = ActiveFinalWidget.Get();
+    const bool bWidgetVisible = Contractory_IsFinalWidget(Widget, World);
 
-
-    UUserWidget* Widget =
-        ActiveFinalWidget.Get();
-
-
-    // --------------------------------------------------------
-    // Chercher l'écran final s'il n'est pas déjà suivi
-    // --------------------------------------------------------
-
-    if (!Contractory_IsFinalWidget(Widget, World))
+    // Detecter une nouvelle sequence finale.
+    if (FinalWidgetSeenAt < 0.0)
     {
-        ActiveFinalWidget.Reset();
-
-        FinalWidgetSeenAt = -1.0;
-        bTraversalMarked = false;
+        Widget = nullptr;
 
         for (TObjectIterator<UUserWidget> It; It; ++It)
         {
             UUserWidget* Candidate = *It;
 
-            if (!Contractory_IsFinalWidget(
-                Candidate,
-                World
-            ))
-            {
+            if (!Contractory_IsFinalWidget(Candidate, World))
                 continue;
-            }
 
             ActiveFinalWidget = Candidate;
             Widget = Candidate;
+            FinalWidgetSeenAt = FPlatformTime::Seconds();
+            bTraversalMarked = false;
 
-            FinalWidgetSeenAt =
-                FPlatformTime::Seconds();
-
-            UE_LOG(
-                LogTemp,
-                Warning,
-                TEXT(
-                    "[CONTRACTORY FINAL] "
-                    "Ecran final detecte"
-                )
-            );
+            UE_LOG(LogTemp, Warning,
+                TEXT("[CONTRACTORY FINAL] Ecran final detecte - compteur demarre"));
 
             break;
         }
     }
 
-
-    if (!Widget)
+    // Aucune sequence en cours.
+    if (FinalWidgetSeenAt < 0.0)
         return;
 
-
-    // --------------------------------------------------------
-    // Dès que la fin Contractory apparaît,
-    // le portail a forcément été traversé.
-    // --------------------------------------------------------
-
-    if (FinalWidgetSeenAt < 0.0)
-    {
-        FinalWidgetSeenAt =
-            FPlatformTime::Seconds();
-    }
-
-
-    // --------------------------------------------------------
-    // Laisser le joueur lire l'écran final.
-    // --------------------------------------------------------
-
+    // Le compteur continue meme si le widget disparait.
     constexpr double FinalScreenDuration = 15.0;
 
     const double Elapsed =
-        FPlatformTime::Seconds()
-        - FinalWidgetSeenAt;
+        FPlatformTime::Seconds() - FinalWidgetSeenAt;
 
     if (Elapsed < FinalScreenDuration)
         return;
 
+    if (bTraversalMarked)
+        return;
 
-    // --------------------------------------------------------
-    // Fermer l'écran final
-    // --------------------------------------------------------
+    APlayerController* PC = nullptr;
 
-    APlayerController* PC =
-        Widget->GetOwningPlayer();
+    if (Widget)
+        PC = Widget->GetOwningPlayer();
 
     if (!PC)
+        PC = UGameplayStatics::GetPlayerController(World, 0);
+
+    AFGPlayerController* FGPC = Cast<AFGPlayerController>(PC);
+
+    if (!FGPC)
     {
-        PC = UGameplayStatics::GetPlayerController(
-            World,
-            0
+        UE_LOG(LogTemp, Warning,
+            TEXT("[CONTRACTORY FINAL] Controleur indisponible - nouvelle tentative"));
+        return;
+    }
+
+    UContractoryMissionRemoteCallObject* RCO =
+        Cast<UContractoryMissionRemoteCallObject>(
+            FGPC->GetRemoteCallObjectOfClass(
+                UContractoryMissionRemoteCallObject::StaticClass()
+            )
         );
-    }
 
-
-        // Enregistrer la traversée seulement APRES les 15 secondes.
-    if (!bTraversalMarked)
+    if (!RCO)
     {
-        bTraversalMarked =
-            UContractoryFinalGateLibrary::
-                MarkFinalPortalTraversed(Widget);
-
-        if (bTraversalMarked)
-        {
-            UE_LOG(
-                LogTemp,
-                Warning,
-                TEXT(
-                    "[CONTRACTORY FINAL] "
-                    "Traversee enregistree apres les 15 secondes"
-                )
-            );
-        }
+        UE_LOG(LogTemp, Warning,
+            TEXT("[CONTRACTORY FINAL] RCO indisponible - nouvelle tentative"));
+        return;
     }
-    Widget->RemoveFromParent();
 
+    UE_LOG(LogTemp, Warning,
+        TEXT("[CONTRACTORY FINAL] DELAI 15 SECONDES ATTEINT"));
 
-    // --------------------------------------------------------
-    // Rendre complètement les contrôles au joueur
-    // --------------------------------------------------------
+    RCO->Server_MarkFinalPortalTraversed();
+    bTraversalMarked = true;
+
+    UE_LOG(LogTemp, Warning,
+        TEXT("[CONTRACTORY FINAL] Demande de validation envoyee au serveur"));
+
+    if (Contractory_IsFinalWidget(Widget, World))
+        Widget->RemoveFromParent();
 
     if (PC)
     {
         FInputModeGameOnly InputMode;
-
         PC->SetInputMode(InputMode);
-
         PC->bShowMouseCursor = false;
-
         PC->ResetIgnoreMoveInput();
         PC->ResetIgnoreLookInput();
     }
 
-
-    UE_LOG(
-        LogTemp,
-        Warning,
-        TEXT(
-            "[CONTRACTORY FINAL] "
-            "Ecran final ferme - controles rendus au joueur"
-        )
-    );
-
+    UE_LOG(LogTemp, Warning,
+        TEXT("[CONTRACTORY FINAL] Sequence terminee - controles rendus"));
 
     ActiveFinalWidget.Reset();
-
     FinalWidgetSeenAt = -1.0;
-    bTraversalMarked = false;
 }

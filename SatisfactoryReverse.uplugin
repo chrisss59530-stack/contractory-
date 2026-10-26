@@ -1,8 +1,8 @@
 ﻿{
     "FileVersion":  3,
-    "Version":  0,
-    "VersionName":  "0.8.4",
-    "SemVersion":  "0.8.4",
+    "Version":  101,
+    "VersionName":  "1.0.1",
+    "SemVersion":  "1.0.1",
     "FriendlyName":  "Contractory",
     "Description":  "Contractory - 21 contrats FICSIT et recyclage de ressources.",
     "Category":  "Mods",

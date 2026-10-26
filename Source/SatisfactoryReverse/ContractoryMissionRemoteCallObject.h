@@ -27,6 +27,8 @@ public:
     ) const override;
 
     UFUNCTION(Server, Reliable)
+    void Server_MarkFinalPortalTraversed();
+    UFUNCTION(Server, Reliable)
     void Server_RequestMissionState();
 
     UFUNCTION(Server, Reliable)

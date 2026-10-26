@@ -1,4 +1,4 @@
-#include "ContractoryMissionManager.h"
+﻿#include "ContractoryMissionManager.h"
 
 namespace
 {
@@ -64,6 +64,38 @@ namespace
     }
 }
 
+int32 UContractoryMissionManager::GetMissionCompletionLimit(int32 MissionId)
+{
+    static const int32 Limits[] = {
+        20, 20, 18, 18, 16, 16, 14, 14,
+        12, 12, 10, 10, 9, 9
+    };
+
+    return MissionId >= 1 && MissionId <= 14
+        ? Limits[MissionId - 1] : 0;
+}
+
+int32 UContractoryMissionManager::GetMissionCompletionCount(
+    const FContractoryMissionSession& Session,
+    int32 MissionId
+)
+{
+    if (MissionId < 1 || MissionId > 14)
+    {
+        return 0;
+    }
+
+    const int32 Index = MissionId - 1;
+
+    if (Session.MissionCompletionCounts.IsValidIndex(Index))
+    {
+        return Session.MissionCompletionCounts[Index];
+    }
+
+    // Ancienne sauvegarde : au moins une completion connue.
+    return Session.CompletedMissionIds.Contains(MissionId) ? 1 : 0;
+}
+
 TArray<FContractoryMissionDefinition>
 UContractoryMissionManager::GetFiveOffers(
     int32 UnlockedTier,
@@ -93,6 +125,13 @@ bool UContractoryMissionManager::AcceptMission(
     int32 UnlockedTier
 )
 {
+    // CONTRACTORY_LIMIT_ACCEPT_100
+    if (GetMissionCompletionCount(Session, MissionId) >=
+        GetMissionCompletionLimit(MissionId))
+    {
+        return false;
+    }
+
     if (
         Session.ActiveMissions.Num() >= GetActiveMissionLimit() ||
         FindActiveIndex(Session, MissionId) != INDEX_NONE
@@ -299,6 +338,35 @@ bool UContractoryMissionManager::ClaimCompletedMission(
     {
         return false;
     }
+
+    // CONTRACTORY_LIMIT_CLAIM_100
+    const int32 PreviousCount = GetMissionCompletionCount(Session, MissionId);
+
+    if (PreviousCount >= GetMissionCompletionLimit(MissionId))
+    {
+        return false;
+    }
+
+    if (Session.MissionCompletionCounts.Num() < 14)
+    {
+        Session.MissionCompletionCounts.SetNumZeroed(14);
+
+        // Migration des anciennes sauvegardes.
+        for (const int32 OldMissionId : Session.CompletedMissionIds)
+        {
+            if (OldMissionId >= 1 && OldMissionId <= 14)
+            {
+                Session.MissionCompletionCounts[OldMissionId - 1] =
+                    FMath::Max(
+                        Session.MissionCompletionCounts[OldMissionId - 1],
+                        1
+                    );
+            }
+        }
+    }
+
+    Session.MissionCompletionCounts[MissionId - 1] =
+        PreviousCount + 1;
 
     Session.Credits += Definition.RewardCredits;
     CreditsAwarded = Definition.RewardCredits;

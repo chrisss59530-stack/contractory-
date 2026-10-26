@@ -1,6 +1,7 @@
 #include "ContractoryMissionRemoteCallObject.h"
 
 #include "ContractoryMissionSubsystem.h"
+#include "ContractoryFinalGate.h"
 
 #include "FGPlayerController.h"
 #include "FGPlayerState.h"
@@ -32,6 +33,27 @@ namespace
     }
 }
 
+void UContractoryMissionRemoteCallObject::
+Server_MarkFinalPortalTraversed_Implementation()
+{
+    AFGPlayerController* PC = GetOwnerPlayerController();
+
+    if (!PC || !PC->HasAuthority())
+    {
+        return;
+    }
+
+    const bool bSuccess =
+        UContractoryFinalGateLibrary::
+            MarkFinalPortalTraversed(PC);
+
+    UE_LOG(
+        LogTemp,
+        Warning,
+        TEXT("[CONTRACTORY FINAL] Validation serveur : %s"),
+        bSuccess ? TEXT("OUI") : TEXT("NON")
+    );
+}
 void UContractoryMissionRemoteCallObject::GetLifetimeReplicatedProps(
     TArray<FLifetimeProperty>& OutLifetimeProps
 ) const

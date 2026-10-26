@@ -1177,37 +1177,7 @@ void UContractoryTerminalWidget::BuildTerminalInterface()
         );
     }
 
-    UButton* RefreshOffersButton =
-        WidgetTree->ConstructWidget<UButton>(
-            UButton::StaticClass(),
-            TEXT("RefreshOffersButton")
-        );
-
-    UTextBlock* RefreshOffersText =
-        WidgetTree->ConstructWidget<UTextBlock>(
-            UTextBlock::StaticClass()
-        );
-
-    RefreshOffersText->SetText(
-        FText::FromString(
-            TEXT("RENOUVELER LES OFFRES")
-        )
-    );
-
-    SetTextSize(RefreshOffersText, 16);
-    StyleButton(RefreshOffersButton);
-    RefreshOffersButton->AddChild(
-        RefreshOffersText
-    );
-
-    RefreshOffersButton->OnClicked.AddDynamic(
-        this,
-        &UContractoryTerminalWidget::RefreshOffersClicked
-    );
-
-    MainBox->AddChildToVerticalBox(
-        RefreshOffersButton
-    );
+    // CONTRACTORY_NO_REFRESH_BUTTON_100
 
     ActiveTitleText =
         WidgetTree->ConstructWidget<UTextBlock>(

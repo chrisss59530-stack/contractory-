@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "Kismet/BlueprintFunctionLibrary.h"
@@ -35,6 +35,12 @@ struct FContractoryMissionSession
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, SaveGame, Category="Contractory|Missions")
     int32 Credits = 0;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, SaveGame, Category="Contractory|Missions")
+    TArray<int32> MissionCompletionCounts;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, SaveGame, Category="Contractory|Boutique")
+    bool bHoverpackPurchased = false;
 };
 
 UCLASS()
@@ -83,6 +89,13 @@ public:
     );
 
     UFUNCTION(BlueprintCallable, Category="Contractory|Missions secondaires")
+    static int32 GetMissionCompletionLimit(int32 MissionId);
+
+    static int32 GetMissionCompletionCount(
+        const FContractoryMissionSession& Session,
+        int32 MissionId
+    );
+
     static bool ClaimCompletedMission(
         UPARAM(ref) FContractoryMissionSession& Session,
         int32 MissionId,

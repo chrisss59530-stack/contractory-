@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include "CoreMinimal.h"
 #include "ContractoryPoweredBuildable.h"
@@ -50,8 +50,6 @@ private:
     );
 
     void ProcessDeliveryInventory();
-
-    void WireEmbeddedConveyorStub();
 
     AContractoryMissionSaveManager*
     ResolveMissionSaveManager();
